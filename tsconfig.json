@@ -1,0 +1,27 @@
+{
+    "compilerOptions": {
+        "outDir": "dist",
+        "target": "es2019",
+        "esModuleInterop": true,
+        "jsx": "react",
+        "jsxFactory": "h",
+        "module": "commonjs",
+        "lib":[
+            "dom",
+            "es2017"
+        ],
+        "noImplicitAny": true,
+        "noImplicitReturns": true,
+        "noImplicitThis": true,
+        "noUnusedLocals": true,
+        "keyofStringsOnly": true,
+        "skipLibCheck": true,
+        "sourceMap": true,
+        "incremental": true,
+        "tsBuildInfoFile": ".tsbuildinfo"
+    },
+    "include": [
+        "src/**/*"
+    ],
+    "exclude": ["node_modules"]
+}
