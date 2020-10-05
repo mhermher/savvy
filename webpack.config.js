@@ -3,7 +3,7 @@ const externals = require('webpack-node-externals');
 
 module.exports = {
     devtool : 'cheap-source-map',
-    target : 'web',
+    target : 'node',
     entry : {
         index : './index.ts'
     },
@@ -17,10 +17,12 @@ module.exports = {
                 test : /\.[tj]s$/,
                 use : {
                     loader : 'babel-loader',
-                    sourceMap : true,
-                    presets : [
-                        ['@babel/preset-env']
-                    ]
+                    options : {
+                        sourceMap : true,
+                        presets : [
+                            ['@babel/preset-env']
+                        ]
+                    }
                 }
             },
             {
@@ -30,8 +32,11 @@ module.exports = {
         ]
     },
     output : {
-        filename : '[name].bundle.js',
-        path : path.resolve(__dirname, 'dist')
+        filename : 'savvy.js',
+        path : path.resolve(__dirname, 'dist'),
+        library : 'savvy',
+        libraryTarget : 'umd',
+        umdNamedDefine: true
     },
     externals : [externals()]
 };
