@@ -1,53 +1,4 @@
-const textDecoder = new TextDecoder();
-
-class Chunker {
-    private blob : Blob;
-    private feed : number; // chunk reload size
-    private buffer : ArrayBuffer;
-    private offset : number; // file offset of current buffer
-    private cursor : number; // current offset within buffer
-    private reload() : Promise<void> {
-        return(
-            this.blob.slice(
-                this.offset + this.cursor,
-                Math.min(this.offset + this.cursor + this.feed, this.blob.size)
-            ).arrayBuffer().then(
-                chunk => {
-                    this.buffer = chunk;
-                    this.offset = this.offset + this.cursor;
-                    this.cursor = 0;
-                }
-            )
-        )
-    }
-    private read(size : number) : Promise<ArrayBuffer> {
-        if (this.cursor + size > this.buffer.byteLength){
-            throw new Error(
-                'Unexpected End of File'
-            );
-        }
-        return(
-            Promise.resolve(this.buffer.slice(this.cursor, this.cursor + size))
-        );
-    }
-    constructor(blob : Blob, feed : number = 1000) {
-        this.blob = blob;
-        this.feed = feed;
-        this.offset = 0;
-    }
-    public next(size : number) : Promise<ArrayBuffer> {
-        if (!this.buffer || this.cursor + size > this.buffer.byteLength){
-            return(
-                this.reload().then(() => this.read(size))
-            );
-        } else {
-            return(this.read(size));
-        }
-    }
-    public position() : number {
-        return(this.offset + this.cursor);
-    }
-}
+import { Feeder } from './types';
 
 interface Meta {
     magic : string,
@@ -126,8 +77,11 @@ export interface DataSet {
     cols(names : Array<string>) : DataSet
 }
 
-export default class Reader {
-    private readField(chunker : Chunker) : Promise<Header> {
+export class FileReader {
+    private decoder : TextDecoder;
+    private log : Array<string>;
+    private readField(chunker : Feeder) : Promise<Header> {
+        this.log.push('Reading Field');
         const start = chunker.position();
         return(
             chunker.next(32).then(
@@ -142,12 +96,12 @@ export default class Reader {
                     }
                     return({
                         magic : magic,
-                        typeCode : dview.getUint32(4, true),
-                        labeled : dview.getUint32(8, true),
-                        missings : dview.getUint32(12, true),
-                        printCode : dview.getUint32(16, true),
-                        writeCode : dview.getUint32(20, true),
-                        name : textDecoder.decode(chunk.slice(24, 32))
+                        typeCode : dview.getInt32(4, true),
+                        labeled : dview.getInt32(8, true),
+                        missings : dview.getInt32(12, true),
+                        printCode : dview.getInt32(16, true),
+                        writeCode : dview.getInt32(20, true),
+                        name : this.decoder.decode(chunk.slice(24, 32))
                     })
                 }
             ).then(
@@ -156,7 +110,7 @@ export default class Reader {
                         return(
                             chunker.next(4).then(
                                 chunk => {
-                                    const length = new DataView(chunk).getUint32(0, true);
+                                    const length = new DataView(chunk).getInt32(0, true);
                                     if (length % 4){
                                         return(length + (4 - (length % 4)));
                                     } else {
@@ -169,7 +123,7 @@ export default class Reader {
                                 chunk => {
                                     return({
                                         ...partial,
-                                        description : textDecoder.decode(chunk)
+                                        description : this.decoder.decode(chunk)
                                     })
                                 }
                             )
@@ -194,7 +148,7 @@ export default class Reader {
                                 : []
                             ),
                             missingStrings : (partial.typeCode !== 0
-                                ? readArray.map((_, idx) => textDecoder.decode(
+                                ? readArray.map((_, idx) => this.decoder.decode(
                                     chunk.slice(8 * idx, 8 * idx + 8))
                                 )
                                 : []
@@ -215,8 +169,8 @@ export default class Reader {
                                         ...partial,
                                         padding : padArray.map((_, idx) => {
                                             return({
-                                                magic : dview.getUint32(0, true),
-                                                typeCode : dview.getUint32(8, true)
+                                                magic : dview.getInt32(0, true),
+                                                typeCode : dview.getInt32(8, true)
                                             })
                                         })
                                     })
@@ -249,56 +203,7 @@ export default class Reader {
             )
         )
     }
-    private readMeta(chunker : Chunker) : Promise<Meta> {
-        return(
-            chunker.next(176).then(
-                chunk => {
-                    const dview = new DataView(chunk);
-                    const magic = textDecoder.decode(chunk.slice(0, 4));
-                    if (magic !== '$FL2'){
-                        throw new Error(
-                            'File is not a sav.' +
-                            'Magic key Expected: "$FL2"; ' +
-                            'Actual: ' + magic
-                        );
-                    }
-                    return({
-                        magic : magic,
-                        product : textDecoder.decode(chunk.slice(4, 64)),
-                        layout : dview.getUint32(64, true),
-                        variables : dview.getUint32(68, true),
-                        compression : dview.getUint32(72, true),
-                        weightIndex : dview.getUint32(76, true),
-                        cases : dview.getUint32(80, true),
-                        bias : dview.getFloat64(84, true),
-                        createdDate : textDecoder.decode(chunk.slice(92, 101)),
-                        createdTime : textDecoder.decode(chunk.slice(101, 109)),
-                        label : textDecoder.decode(chunk.slice(109, 173))
-                    })
-                }
-            )
-        );
-    }
-    private readHeaders(chunker : Chunker) : Promise<Array<Header>> {
-        return(
-            this.readMeta(chunker).then(
-                meta => {
-                    const fieldArray = new Array(meta.variables);
-                    return(
-                        fieldArray.reduce(
-                            (acc : Promise<Array<Header>>) => acc.then(
-                                cum => this.readField(chunker).then(
-                                    result => cum.concat(result)
-                                )
-                            ),
-                            Promise.resolve([] as Array<Header>)
-                        ) as Promise<Array<Header>>
-                    )
-                }
-            )
-        )
-    }
-    private readLevel(chunker : Chunker) : Promise<{level : number, label : string}> {
+    private readLevel(chunker : Feeder) : Promise<{level : number, label : string}> {
         return(
             chunker.next(9).then(
                 chunk => {
@@ -317,13 +222,13 @@ export default class Reader {
                 parsed => chunker.next(parsed.read).then(
                     chunk => ({
                         level : parsed.level,
-                        label : textDecoder.decode(chunk.slice(0, parsed.length))
+                        label : this.decoder.decode(chunk.slice(0, parsed.length))
                     })
                 )
             )
         )
     }
-    private readFactor(chunker : Chunker) : Promise<Factor> {
+    private readFactor(chunker : Feeder) : Promise<Factor> {
         return(
             chunker.next(4).then(
                 chunk => (new DataView(chunk)).getInt32(0, true)
@@ -380,7 +285,7 @@ export default class Reader {
             )
         )
     }
-    private readDocument(chunker : Chunker) : Promise<Array<string>> {
+    private readDocument(chunker : Feeder) : Promise<Array<string>> {
         return(
             chunker.next(4).then(
                 chunk => (new DataView(chunk)).getInt32(0, true)
@@ -390,7 +295,7 @@ export default class Reader {
                 chunk => {
                     const docArray = new Array(chunk.byteLength / 80);
                     return(
-                        docArray.map((_, idx) => textDecoder.decode(
+                        docArray.map((_, idx) => this.decoder.decode(
                             chunk.slice(idx * 80, idx * 80 + 80)
                         ))
                     )
@@ -398,7 +303,7 @@ export default class Reader {
             )
         )
     }
-    private readSysInteger(chunker : Chunker) : Promise<Internal['integer']> {
+    private readSysInteger(chunker : Feeder) : Promise<Internal['integer']> {
         return(
             chunker.next(32).then(chunk => {
                 const dview = new DataView(chunk);
@@ -415,7 +320,7 @@ export default class Reader {
             })
         )
     }
-    private readSysFloat(chunker : Chunker) : Promise<Internal['float']> {
+    private readSysFloat(chunker : Feeder) : Promise<Internal['float']> {
         return(
             chunker.next(24).then(chunk => {
                 const dview = new DataView(chunk);
@@ -427,7 +332,7 @@ export default class Reader {
             })
         )
     }
-    private readSysDisplay(chunker : Chunker, count : number) : Promise<Array<number>> {
+    private readSysDisplay(chunker : Feeder, count : number) : Promise<Array<number>> {
         return(
             chunker.next(count * 4).then(chunk => {
                 const dview = new DataView(chunk);
@@ -440,10 +345,10 @@ export default class Reader {
             })
         )
     }
-    private readLabels(chunker : Chunker, size : number) : Promise<Map<string, string>> {
+    private readLabels(chunker : Feeder, size : number) : Promise<Map<string, string>> {
         return(
             chunker.next(size).then(chunk => {
-                const raw = textDecoder.decode(chunk);
+                const raw = this.decoder.decode(chunk);
                 return(
                     new Map(
                         raw.split('\t').map(
@@ -454,10 +359,10 @@ export default class Reader {
             })
         )
     }
-    private readLongWidths(chunker : Chunker, size : number) : Promise<Map<string, number>> {
+    private readLongWidths(chunker : Feeder, size : number) : Promise<Map<string, number>> {
         return(
             chunker.next(size).then(chunk => {
-                const raw = textDecoder.decode(chunk);
+                const raw = this.decoder.decode(chunk);
                 const rows = raw.split('\t');
                 return(
                     new Map(
@@ -471,13 +376,13 @@ export default class Reader {
             })
         )
     }
-    private readLongLabels(chunker : Chunker, size : number) : Promise<void> {
+    private readLongLabels(chunker : Feeder, size : number) : Promise<void> {
         // need to figure out how this works
         return(
             chunker.next(size).then(() => Promise.resolve())
         )
     }
-    private readSpecial(chunker : Chunker) : Promise<Partial<Internal>> {
+    private readSpecial(chunker : Feeder) : Promise<Partial<Internal>> {
         return(
             chunker.next(12).then(
                 chunk => {
@@ -576,7 +481,7 @@ export default class Reader {
             finished : left.finished || right.finished || 0
         })
     }
-    private recurseInternal(chunker : Chunker) : Promise<Partial<Internal>> {
+    private recurseInternal(chunker : Feeder) : Promise<Partial<Internal>> {
         return(
             chunker.next(4).then(
                 chunk => (new DataView(chunk).getInt32(0, true))
@@ -629,7 +534,7 @@ export default class Reader {
             )
         );
     }
-    private readInternal(chunker : Chunker) : Promise<Internal> {
+    private readInternal(chunker : Feeder) : Promise<Internal> {
         return(
             this.recurseInternal(chunker).then(
                 partial => ({
@@ -658,39 +563,89 @@ export default class Reader {
             )
         )
     }
-    private readSchema(chunker : Chunker) : Promise<Schema> {
+    constructor(log : Array<string> = []) {
+        this.decoder = new TextDecoder();
+        this.log = log;
+    }
+    public meta(chunker : Feeder) : Promise<Meta> {
+        this.log.splice(0, this.log.length);
+        const position = chunker.position();
         return(
-            this.readMeta(chunker).then(
-                meta => ({
-                    meta : meta
-                })
-            ).then(
-                partial => this.readHeaders(chunker).then(
-                    headers => ({
-                        ...partial,
-                        headers : headers
-                    })
+            chunker.jump(0).then(
+                () => chunker.next(176).then(
+                    chunk => {
+                        this.log.push('Parsing Meta Fields');
+                        const dview = new DataView(chunk);
+                        const magic = this.decoder.decode(chunk.slice(0, 4));
+                        if (magic !== '$FL2'){
+                            throw new Error(
+                                'File is not a sav. ' +
+                                'Magic key Expected: "$FL2"; ' +
+                                'Actual: ' + magic
+                            );
+                        }
+                        return({
+                            magic : magic,
+                            product : this.decoder.decode(chunk.slice(4, 64)).trim(),
+                            layout : dview.getInt32(64, true),
+                            variables : dview.getInt32(68, true),
+                            compression : dview.getInt32(72, true),
+                            weightIndex : dview.getInt32(76, true),
+                            cases : dview.getInt32(80, true),
+                            bias : dview.getFloat64(84, true),
+                            createdDate : this.decoder.decode(chunk.slice(92, 101)),
+                            createdTime : this.decoder.decode(chunk.slice(101, 109)),
+                            label : this.decoder.decode(chunk.slice(109, 173)).trim()
+                        })
+                    }
                 )
-            ).then(
-                partial => this.readInternal(chunker).then(
-                    internal => ({
-                        ...partial,
-                        internal : internal
-                    })
+            ).finally(() => chunker.jump(position))
+        );
+    }
+    public headers(chunker : Feeder) : Promise<Array<Header>> {
+        this.log.splice(0, this.log.length);
+        const position = chunker.position();
+        return(
+            chunker.jump(0).then(
+                () => this.meta(chunker).then(
+                    meta => {
+                        this.log.push('Parsing Headers');
+                        const fieldArray = new Array(meta.variables);
+                        return(Promise.all(
+                            fieldArray.map(() => this.readField(chunker))
+                        ))
+                    }
                 )
-            )
-        )
+            ).finally(() => chunker.jump(position))
+        );
     }
-    public meta(blob : Blob) : Promise<Meta> {
-        const chunker = new Chunker(blob, 176);
-        return(this.readMeta(chunker));
-    }
-    public headers(blob : Blob) : Promise<Array<Header>> {
-        const chunker = new Chunker(blob);
-        return(this.readHeaders(chunker));
-    }
-    public schema(blob : Blob) : Promise<Schema> {
-        const chunker = new Chunker(blob);
-        return(this.readSchema(chunker));
+    public schema(chunker : Feeder) : Promise<Schema> {
+        this.log.splice(0, this.log.length);
+        const position = chunker.position();
+        return(
+            chunker.jump(0).then(
+                () => this.meta(chunker).then(
+                    meta => ({
+                        meta : meta
+                    })
+                ).then(
+                    partial => this.headers(chunker).then(
+                        headers => ({
+                            ...partial,
+                            headers : headers
+                        })
+                    )
+                ).then(
+                    partial => this.readInternal(chunker).then(
+                        internal => ({
+                            ...partial,
+                            internal : internal
+                        })
+                    )
+                )
+            ).finally(() => chunker.jump(position))
+        );
     }
 }
+
+export {BlobFeeder, BuffFeeder, FileFeeder} from './feeders'
