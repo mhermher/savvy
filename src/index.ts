@@ -25,12 +25,8 @@ interface Header {
     missing : {
         codes : Array<number>,
         strings : Array<string>,
-        range : Array<number>
-    },
-    padding : Array<{
-        magic : number,
-        code : number
-    }>
+        range : [number, number]
+    }
 }
 
 interface Factor {
@@ -102,43 +98,47 @@ export class FileReader {
             )
         )
     }
+    private readFieldMissingCodes(view : DataView, count : number) : Array<number> {
+        const readArray = new Array(count).fill(0);
+        return(
+            readArray.map((_, idx) => view.getFloat64(8 * idx))
+        );
+    }
+    private readFieldMissingStrings(chunk : ArrayBuffer, count : number) : Array<string> {
+        const readArray = new Array(count).fill(0);
+        return(
+            readArray.map((_, idx) => this.decoder.decode(
+                chunk.slice(8 * idx, 8 * idx + 8)
+            ))
+        );
+    }
+    private readFieldMissingRange(view : DataView) : [number, number] {
+        return([
+            view.getFloat64(0, true),
+            view.getFloat64(8, true)
+        ]);
+    }
     private readFieldMissing(chunker : Feeder, numeric : boolean, code : number) : Promise<Header['missing']> {
         return(
             chunker.next(8 * Math.abs(code)).then(chunk => {
                 const dview = new DataView(chunk);
-                const readArray = new Array(Math.abs(code)).fill(0);
                 return({
                     codes : (numeric && code > 0
-                        ? readArray.map((_, idx) => dview.getFloat64(8 * idx, true))
-                        : []
+                        ? this.readFieldMissingCodes(dview, code)
+                        : (numeric && code === -3
+                            ? this.readFieldMissingCodes(dview, 3).slice(2)
+                            : []
+                        )
                     ),
                     range : (numeric && code < 0
-                        ? readArray.map((_, idx) => dview.getFloat64(8 * idx, true))
-                        : []
+                        ? this.readFieldMissingRange(dview)
+                        : [undefined, undefined]
                     ),
-                    strings : (!numeric
-                        ? readArray.map((_, idx) => this.decoder.decode(
-                            chunk.slice(8 * idx, 8 * idx + 8))
-                        )
+                    strings : (!numeric && code > 0
+                        ? this.readFieldMissingStrings(chunk, code)
                         : []
                     )
                 })
-            })
-        )
-    }
-    private readFieldPadding(chunker : Feeder, code : number) : Promise<Header['padding']> {
-        this.log.push('Field padding at ' + chunker.position());
-        const padding = Math.ceil(code / 8) - 1;
-        const padArray = new Array(padding).fill(0);
-        return(
-            chunker.next(28 * padding).then(chunk => {
-                const dview = new DataView(chunk);
-                return(
-                    padArray.map((_, idx) => ({
-                        magic : dview.getInt32(0, true),
-                        code : dview.getInt32(4, true)
-                    }))
-                )
             })
         )
     }
@@ -193,31 +193,10 @@ export class FileReader {
                             ...partial,
                             missing : {
                                 codes : [],
-                                range : [],
+                                range : [undefined, undefined] as [number, number],
                                 strings : []
                             }
                         })
-                    }
-                }
-            ).then(
-                partial => {
-                    if (partial.typeCode > 8){
-                        return(
-                            this.readFieldPadding(
-                                chunker,
-                                partial.typeCode
-                            ).then(
-                                padding => ({
-                                    ...partial,
-                                    padding : padding
-                                })
-                            )
-                        )
-                    } else {
-                        return({
-                            ...partial,
-                            padding : [] as Array<{magic : number, code : number}>
-                        });
                     }
                 }
             ).then(
@@ -229,9 +208,7 @@ export class FileReader {
                     writeCode : partial.writeCode,
                     name : partial.name,
                     description : partial.description,
-                    missing : partial.missing,
-                    missings : partial.missings,
-                    padding : partial.padding
+                    missing : partial.missing
                 })
             )
         )
