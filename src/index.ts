@@ -538,35 +538,33 @@ export class FileReader {
             )
         );
     }
-    private readInternal(chunker : Feeder, start : number) : Promise<Internal> {
+    private readInternal(chunker : Feeder) : Promise<Internal> {
         this.log.push('Reading Internal');
         return(
-            chunker.jump(start).then(
-                () => this.recurseInternal(chunker).then(
-                    partial => ({
-                        float : partial.float ?? {
-                            missing : undefined,
-                            high : undefined,
-                            low : undefined
-                        },
-                        integer : partial.integer ?? {
-                            major : undefined,
-                            minor : undefined,
-                            revision : undefined,
-                            machine : undefined,
-                            float : undefined,
-                            compression : undefined,
-                            endianness : undefined,
-                            character : undefined
-                        },
-                        display : partial.display ?? [],
-                        documents : partial.documents ?? [],
-                        labels : partial.labels ?? new Map(),
-                        longs : partial.longs ?? new Map(),
-                        factors : partial.factors ?? [],
-                        finished : partial.finished
-                    })
-                )
+            this.recurseInternal(chunker).then(
+                partial => ({
+                    float : partial.float ?? {
+                        missing : undefined,
+                        high : undefined,
+                        low : undefined
+                    },
+                    integer : partial.integer ?? {
+                        major : undefined,
+                        minor : undefined,
+                        revision : undefined,
+                        machine : undefined,
+                        float : undefined,
+                        compression : undefined,
+                        endianness : undefined,
+                        character : undefined
+                    },
+                    display : partial.display ?? [],
+                    documents : partial.documents ?? [],
+                    labels : partial.labels ?? new Map(),
+                    longs : partial.longs ?? new Map(),
+                    factors : partial.factors ?? [],
+                    finished : partial.finished
+                })
             )
         )
     }
@@ -630,7 +628,7 @@ export class FileReader {
         return(
             Promise.all(
                 readArray.map(
-                    row => this.readRow(instructor, schema)
+                    () => this.readRow(instructor, schema)
                 )
             )
         )
@@ -692,17 +690,16 @@ export class FileReader {
                     meta : meta
                 })
             ).then(
-                partial => this.headers(chunker).then(
-                    headers => ({
-                        ...partial,
-                        headers : headers
-                    })
+                partial => chunker.jump(176).then(
+                    () => this.recurseField(chunker).then(
+                        headers => ({
+                            ...partial,
+                            headers : headers
+                        })
+                    )
                 )
             ).then(
-                partial => this.readInternal(
-                    chunker,
-                    this.headerEnd(partial.headers)
-                ).then(
+                partial => this.readInternal(chunker).then(
                     internal => ({
                         ...partial,
                         internal : internal
