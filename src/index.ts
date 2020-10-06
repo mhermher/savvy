@@ -1,82 +1,62 @@
-import { Feeder } from './types';
+import { Display, Factor, Feeder, Header, Internal, Meta, Parsed, Row, Schema } from './types';
 
-interface Meta {
-    magic : string,
-    product : string,
-    layout : number,
-    variables : number,
-    compression : number,
-    weightIndex : number,
-    cases : number,
-    bias : number,
-    createdDate : string,
-    createdTime : string,
-    label : string
-}
-
-interface Header {
-    start : number,
-    end : number,
-    typeCode : number,
-    printCode : number,
-    writeCode : number,
-    name : string,
-    description : string,
-    missing : {
-        codes : Array<number>,
-        strings : Array<string>,
-        range : [number, number]
+class Instructor {
+    private feeder : Feeder;
+    private instructions : DataView;
+    private cursor : number;
+    private bias : number;
+    private decoder : TextDecoder;
+    constructor(feeder : Feeder, bias : number) {
+        this.feeder = feeder;
+        this.bias = bias;
+        this.cursor = 8;
+        this.decoder = new TextDecoder();
     }
-}
-
-interface Factor {
-    map : Map<number, string>,
-    indices : Set<number>
-}
-
-interface Display {
-    type : 1 | 2 | 3,
-    width : number,
-    align : 0 | 1 | 2
-}
-
-interface Internal {
-    float : {
-        missing : number,
-        high : number,
-        low : number
-    },
-    integer : {
-        major : number,
-        minor : number,
-        revision : number,
-        machine : number,
-        float : number,
-        compression : number,
-        endianness : number,
-        character : number
-    },
-    display : Array<Display>,
-    documents : Array<Array<string>>,
-    labels : Map<string, string>,
-    widths : Map<string, number>,
-    factors : Array<Factor>,
-    finished : number
-}
-
-interface Schema {
-    meta : Meta,
-    headers : Array<Header>,
-    internal : Internal
-}
-
-export interface DataSet {
-    n : number,
-    fields : Array<string>,
-    row(index : number) : {[key : string] : string | number | boolean},
-    rows(indices : Array<number>) : DataSet,
-    col(name : string) : Array<number> | Array<string> | Array<boolean>,
-    cols(names : Array<string>) : DataSet
+    public instruct() : Promise<number> {
+        if (this.cursor > 7){
+            return(
+                this.feeder.next(8).then(
+                    chunk => {
+                        this.cursor = 0;
+                        this.instructions = new DataView(chunk);
+                    }
+                ).then(this.instruct)
+            )
+        } else {
+            const instruction = this.instructions.getUint8(this.cursor++);
+            if (instruction){
+                return(Promise.resolve(instruction));
+            } else {
+                return(this.instruct());
+            }
+        }
+    }
+    public getNumber(code : number) : Promise<number> {
+        switch(code){
+            case 252: throw new Error('Unexpected end of records.')
+            case 253: return(
+                this.feeder.next(8).then(
+                    chunk => (new DataView(chunk)).getFloat64(0, true)
+                )
+            )
+            case 254: throw new Error('Cell code type mismatch')
+            case 255: return(Promise.resolve(null))
+            default: return(Promise.resolve(code - this.bias))
+        }
+    }
+    public getString(code : number) : Promise<string> {
+        switch(code){
+            case 252: throw new Error('Unexpected end of records.')
+            case 253: return(
+                this.feeder.next(8).then(
+                    chunk => this.decoder.decode(chunk)
+                )
+            )
+            case 254: return(Promise.resolve(''))
+            case 255: return(Promise.resolve(null))
+            default: throw new Error('Default code not supported for strings.')
+        }
+    }
 }
 
 export class FileReader {
@@ -452,27 +432,21 @@ export class FileReader {
                             }
                             return(
                                 this.readSysDisplay(chunker, count / 3).then(
-                                    sysDisplay => ({
-                                        display : sysDisplay
-                                    })
+                                    display => ({display})
                                 )
                             );
                         case 13:
                             this.log.push('Subcode 13');
                             return(
                                 this.readLabels(chunker, count * length).then(
-                                    labels => ({
-                                        labels : labels
-                                    })
+                                    labels => ({labels})
                                 )
                             );
                         case 14:
                             this.log.push('Subcode 14');
                             return(
                                 this.readLongWidths(chunker, count * length).then(
-                                    widths => ({
-                                        widths : widths
-                                    })
+                                    longs => ({longs})
                                 )
                             );
                         case 21:
@@ -501,9 +475,9 @@ export class FileReader {
                 ...(left.labels ?? []),
                 ...(right.labels ?? [])
             ]),
-            widths : new Map([
-                ...(left.widths ?? []),
-                ...(right.widths ?? [])
+            longs : new Map([
+                ...(left.longs ?? []),
+                ...(right.longs ?? [])
             ]),
             factors : (left.factors ?? []).concat(right.factors ?? []),
             finished : left.finished || right.finished || 0
@@ -588,7 +562,7 @@ export class FileReader {
                         display : partial.display ?? [],
                         documents : partial.documents ?? [],
                         labels : partial.labels ?? new Map(),
-                        widths : partial.widths ?? new Map(),
+                        longs : partial.longs ?? new Map(),
                         factors : partial.factors ?? [],
                         finished : partial.finished
                     })
@@ -609,7 +583,13 @@ export class FileReader {
                     return(
                         this.readField(chunker).then(
                             header => this.recurseField(chunker).then(
-                                result => [header].concat(result)
+                                result => {
+                                    if (header.typeCode === -1){
+                                        return(result);
+                                    } else {
+                                        return([header].concat(result))
+                                    }
+                                }
                             )
                         )
                     )
@@ -619,6 +599,41 @@ export class FileReader {
     }
     private headerEnd(headers : Array<Header>) : number {
         return(headers[headers.length - 1].end);
+    }
+    private readCells(instructor : Instructor, header : Header) : Promise<number | string> {
+        if (header.typeCode){
+            return(
+                instructor.instruct().then(instructor.getString)
+            );
+        } else {
+            return(
+                instructor.instruct().then(instructor.getNumber)
+            );
+        }
+    }
+    private readRow(instructor : Instructor, schema : Schema) : Promise<Row> {
+        return(
+            Promise.all(
+                schema.headers.map(
+                    header => this.readCells(instructor, header).then(
+                        cell => [header.name, cell] as [string, number | string]
+                    )
+                )
+            ).then(
+                cells => new Map(cells)
+            )
+        );
+    }
+    private readData(chunker : Feeder, schema : Schema) : Promise<Array<Row>> {
+        const readArray = new Array(schema.meta.cases).fill(0);
+        const instructor = new Instructor(chunker, schema.meta.bias);
+        return(
+            Promise.all(
+                readArray.map(
+                    row => this.readRow(instructor, schema)
+                )
+            )
+        )
     }
     constructor(log : Array<string> = []) {
         this.decoder = new TextDecoder();
@@ -691,6 +706,20 @@ export class FileReader {
                     internal => ({
                         ...partial,
                         internal : internal
+                    })
+                )
+            ).finally(() => chunker.jump(position))
+        );
+    }
+    public all(chunker : Feeder) : Promise<Parsed> {
+        this.log.splice(0, this.log.length);
+        const position = chunker.position();
+        return(
+            this.schema(chunker).then(
+                schema => this.readData(chunker, schema).then(
+                    rows => ({
+                        ...schema,
+                        rows : rows
                     })
                 )
             ).finally(() => chunker.jump(position))

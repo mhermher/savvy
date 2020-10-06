@@ -71,6 +71,9 @@ export class BlobFeeder implements Feeder {
     public position() : number {
         return(this.offset + this.cursor);
     }
+    public done() : boolean {
+        return(this.offset + this.cursor === this.blob.size);
+    }
 }
 
 export class BuffFeeder implements Feeder {
@@ -106,6 +109,9 @@ export class BuffFeeder implements Feeder {
     }
     public position() : number {
         return(this.cursor);
+    }
+    public done() : boolean {
+        return(this.cursor === this.buffer.byteLength);
     }
 }
 
@@ -149,5 +155,8 @@ export class FileFeeder implements Feeder {
     }
     public position() : number {
         return(this.cursor);
+    }
+    public done() : boolean {
+        return(this.cursor === this.size);
     }
 }
