@@ -4,14 +4,9 @@ fs = require('fs');
 let log = [];
 let raw = fs.readFileSync('C:/Users/Mher/Downloads/PsychBike.sav');
 let dv = new DataView(raw.buffer);
-let sav = new svy.FileFeeder('C:/Users/Mher/Downloads/PsychBike.sav');
-let res;
-
+let decoder = new TextDecoder();
 let reader = new svy.FileReader(log);
-
-reader.meta(sav).then(parsed => {
-    res = parsed
-});
-reader.headers(sav).then(parsed => {
-    res = parsed
-});
+let sav = new svy.FileFeeder('C:/Users/Mher/Downloads/PsychBike.sav');
+reader.meta(sav).then(parsed => meta = parsed);
+reader.headers(sav).then(parsed => headers = parsed);
+reader.schema(sav).then(parsed => schema = parsed);
