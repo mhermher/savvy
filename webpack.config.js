@@ -2,6 +2,7 @@ const path = require('path');
 const externals = require('webpack-node-externals');
 
 module.exports = {
+    mode : 'none',
     devtool : 'cheap-source-map',
     target : 'node',
     entry : {

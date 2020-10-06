@@ -16,7 +16,6 @@ interface Meta {
 
 interface Header {
     start : number,
-    magic : number,
     typeCode : number,
     printCode : number,
     writeCode : number,
@@ -29,7 +28,7 @@ interface Header {
     },
     padding : Array<{
         magic : number,
-        typeCode : number
+        code : number
     }>
 }
 
@@ -80,52 +79,87 @@ export interface DataSet {
 export class FileReader {
     private decoder : TextDecoder;
     private log : Array<string>;
+    private readFieldDesc(chunker : Feeder) : Promise<string> {
+        return(
+            chunker.next(4).then(chunk => {
+                const length = new DataView(chunk).getInt32(0, true);
+                if (length % 4){
+                    return(length + (4 - (length % 4)));
+                } else {
+                    return(length);
+                }
+            }).then(
+                length => chunker.next(length)
+            ).then(
+                chunk => this.decoder.decode(chunk).trim()
+            )
+        )
+    }
+    private readFieldMissing(chunker : Feeder, numeric : boolean, code : number) : Promise<Header['missing']> {
+        return(
+            chunker.next(8 * Math.abs(code)).then(chunk => {
+                const dview = new DataView(chunk);
+                const readArray = new Array(Math.abs(code));
+                return({
+                    codes : (numeric && code > 0
+                        ? readArray.map((_, idx) => dview.getFloat64(8 * idx, true))
+                        : []
+                    ),
+                    range : (numeric && code < 0
+                        ? readArray.map((_, idx) => dview.getFloat64(8 * idx, true))
+                        : []
+                    ),
+                    strings : (!numeric
+                        ? readArray.map((_, idx) => this.decoder.decode(
+                            chunk.slice(8 * idx, 8 * idx + 8))
+                        )
+                        : []
+                    )
+                })
+            })
+        )
+    }
+    private readFieldPadding(chunker : Feeder, code : number) : Promise<Header['padding']> {
+        const padding = Math.ceil(code / 8) - 1;
+        const padArray = new Array(padding);
+        return(
+            chunker.next(28 * padding).then(chunk => {
+                const dview = new DataView(chunk);
+                return(
+                    padArray.map((_, idx) => ({
+                        magic : dview.getInt32(0, true),
+                        code : dview.getInt32(4, true)
+                    }))
+                )
+            })
+        )
+    }
     private readField(chunker : Feeder) : Promise<Header> {
+        // tslint:disable-next-line: no-console
         this.log.push('Reading Field');
         const start = chunker.position();
         return(
-            chunker.next(32).then(
+            chunker.next(28).then(
                 chunk => {
                     const dview = new DataView(chunk);
-                    const magic = dview.getFloat32(0, true);
-                    if (magic !== 2){
-                        throw new Error(
-                            'Variable magic code Expected: 2 ' +
-                            'Actual: ' + magic
-                        )
-                    }
                     return({
-                        magic : magic,
-                        typeCode : dview.getInt32(4, true),
-                        labeled : dview.getInt32(8, true),
-                        missings : dview.getInt32(12, true),
-                        printCode : dview.getInt32(16, true),
-                        writeCode : dview.getInt32(20, true),
-                        name : this.decoder.decode(chunk.slice(24, 32))
+                        typeCode : dview.getInt32(0, true),
+                        labeled : dview.getInt32(4,  true),
+                        missings : dview.getInt32(8, true),
+                        printCode : dview.getInt32(12, true),
+                        writeCode : dview.getInt32(16, true),
+                        name : this.decoder.decode(chunk.slice(20, 28)).trim()
                     })
                 }
             ).then(
                 partial => {
                     if (partial.labeled) {
                         return(
-                            chunker.next(4).then(
-                                chunk => {
-                                    const length = new DataView(chunk).getInt32(0, true);
-                                    if (length % 4){
-                                        return(length + (4 - (length % 4)));
-                                    } else {
-                                        return(length);
-                                    }
-                                }
-                            ).then(
-                                length => chunker.next(length)
-                            ).then(
-                                chunk => {
-                                    return({
-                                        ...partial,
-                                        description : this.decoder.decode(chunk)
-                                    })
-                                }
+                            this.readFieldDesc(chunker).then(
+                                description => ({
+                                    ...partial,
+                                    description : description
+                                })
                             )
                         )
                     } else {
@@ -133,71 +167,62 @@ export class FileReader {
                     }
                 }
             ).then(
-                partial => chunker.next(8 * Math.abs(partial.missings)).then(
-                    chunk => {
-                        const dview = new DataView(chunk);
-                        const readArray = new Array(Math.abs(partial.missings));
-                        return({
-                            ...partial,
-                            missingCodes : (partial.typeCode === 0 && partial.missings > 0
-                                ? readArray.map((_, idx) => dview.getFloat64(8 * idx, true))
-                                : []
-                            ),
-                            missingRange : (partial.typeCode === 0 && partial.missings < 0
-                                ? readArray.map((_, idx) => dview.getFloat64(8 * idx, true))
-                                : []
-                            ),
-                            missingStrings : (partial.typeCode !== 0
-                                ? readArray.map((_, idx) => this.decoder.decode(
-                                    chunk.slice(8 * idx, 8 * idx + 8))
-                                )
-                                : []
-                            )
-                        })
-                    }
-                )
-            ).then(
                 partial => {
-                    if (partial.typeCode > 8){
-                        const padding = Math.ceil(partial.typeCode / 8) - 1;
-                        const padArray = new Array(padding);
+                    if (partial.missings){
                         return(
-                            chunker.next(28 * padding).then(
-                                chunk => {
-                                    const dview = new DataView(chunk);
-                                    return({
-                                        ...partial,
-                                        padding : padArray.map((_, idx) => {
-                                            return({
-                                                magic : dview.getInt32(0, true),
-                                                typeCode : dview.getInt32(8, true)
-                                            })
-                                        })
-                                    })
-                                }
+                            this.readFieldMissing(
+                                chunker,
+                                partial.typeCode === 0,
+                                partial.missings
+                            ).then(
+                                missing => ({
+                                    ...partial,
+                                    missing : missing
+                                })
                             )
                         )
                     } else {
                         return({
                             ...partial,
-                            padding : [] as Array<{magic : number, typeCode : number}>
+                            missing : {
+                                codes : [],
+                                range : [],
+                                strings : []
+                            }
+                        })
+                    }
+                }
+            ).then(
+                partial => {
+                    if (partial.typeCode > 8){
+                        return(
+                            this.readFieldPadding(
+                                chunker,
+                                partial.typeCode
+                            ).then(
+                                padding => ({
+                                    ...partial,
+                                    padding : padding
+                                })
+                            )
+                        )
+                    } else {
+                        return({
+                            ...partial,
+                            padding : [] as Array<{magic : number, code : number}>
                         });
                     }
                 }
             ).then(
                 partial => ({
                     start : start,
-                    magic : partial.magic,
                     typeCode : partial.typeCode,
                     printCode : partial.printCode,
                     writeCode : partial.writeCode,
                     name : partial.name,
                     description : partial.description,
-                    missing : {
-                        codes : partial.missingCodes,
-                        strings : partial.missingStrings,
-                        range : partial.missingRange
-                    },
+                    missing : partial.missing,
+                    missings : partial.missings,
                     padding : partial.padding
                 })
             )
@@ -563,6 +588,27 @@ export class FileReader {
             )
         )
     }
+    private recurseField(chunker : Feeder) : Promise<Array<Header>> {
+        this.log.push('recursing field');
+        return(
+            chunker.next(4).then(chunk => {
+                const magic = (new DataView(chunk)).getInt32(0, true);
+                if (magic !== 2){
+                    return(
+                        chunker.jump(chunker.position() - 4).then(() => [])
+                    )
+                } else {
+                    return(
+                        this.readField(chunker).then(
+                            header => this.recurseField(chunker).then(
+                                result => [header].concat(result)
+                            )
+                        )
+                    )
+                }
+            })
+        )
+    }
     constructor(log : Array<string> = []) {
         this.decoder = new TextDecoder();
         this.log = log;
@@ -606,16 +652,8 @@ export class FileReader {
         this.log.splice(0, this.log.length);
         const position = chunker.position();
         return(
-            chunker.jump(0).then(
-                () => this.meta(chunker).then(
-                    meta => {
-                        this.log.push('Parsing Headers');
-                        const fieldArray = new Array(meta.variables);
-                        return(Promise.all(
-                            fieldArray.map(() => this.readField(chunker))
-                        ))
-                    }
-                )
+            chunker.jump(176).then(
+                () => this.recurseField(chunker)
             ).finally(() => chunker.jump(position))
         );
     }
@@ -623,25 +661,23 @@ export class FileReader {
         this.log.splice(0, this.log.length);
         const position = chunker.position();
         return(
-            chunker.jump(0).then(
-                () => this.meta(chunker).then(
-                    meta => ({
-                        meta : meta
+            this.meta(chunker).then(
+                meta => ({
+                    meta : meta
+                })
+            ).then(
+                partial => this.headers(chunker).then(
+                    headers => ({
+                        ...partial,
+                        headers : headers
                     })
-                ).then(
-                    partial => this.headers(chunker).then(
-                        headers => ({
-                            ...partial,
-                            headers : headers
-                        })
-                    )
-                ).then(
-                    partial => this.readInternal(chunker).then(
-                        internal => ({
-                            ...partial,
-                            internal : internal
-                        })
-                    )
+                )
+            ).then(
+                partial => this.readInternal(chunker).then(
+                    internal => ({
+                        ...partial,
+                        internal : internal
+                    })
                 )
             ).finally(() => chunker.jump(position))
         );
