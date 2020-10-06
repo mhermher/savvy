@@ -346,7 +346,7 @@ export class FileReader {
                     dispArray.map((_, idx) => ({
                         type : dview.getInt32(idx * 12, true) as 1 | 2 | 3,
                         width : dview.getInt32(idx * 12 + 4, true),
-                        align : dview.getInt32(idx * 12 + 8) as 0 | 1 | 2
+                        align : dview.getInt32(idx * 12 + 8, true) as 0 | 1 | 2
                     }))
                 )
             })
