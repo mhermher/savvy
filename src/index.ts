@@ -280,6 +280,13 @@ export class FileReader {
         // need to figure out how this works
         return(feeder.next(size));
     }
+    private readUnrecognized(feeder : Feeder, count : number, length : number) : Array<ArrayBuffer> {
+        const chunk = feeder.next(count * length);
+        const readArray = (new Array(count)).fill(0);
+        return(
+            readArray.map((_, idx) => chunk.slice(idx * length, idx * length + length))
+        );
+    }
     private readInternal(feeder : Feeder) : Internal {
         this.log.push('Reading Internal');
         const partial : Partial<Internal> = {};
@@ -372,7 +379,7 @@ export class FileReader {
                         default:
                             this.log.push('Unrecognized Subcode');
                             partial.unrecognized = (partial.unrecognized ?? []).concat(
-                                [code, feeder.next(count * length)]
+                                [[code, this.readUnrecognized(feeder, count, length)]]
                             );
                             break;
                     }

@@ -56,7 +56,7 @@ export interface Internal {
     longs : Map<string, number>,
     factors : Array<Factor>,
     extra : Array<ArrayBuffer>,
-    unrecognized : Array<[number, ArrayBuffer]>,
+    unrecognized : Array<[number, Array<ArrayBuffer>]>,
     finished : number
 }
 
