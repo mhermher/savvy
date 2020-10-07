@@ -379,7 +379,7 @@ export class FileReader {
                         default:
                             this.log.push('Unrecognized Subcode');
                             partial.unrecognized = (partial.unrecognized ?? []).concat(
-                                [[code, this.readUnrecognized(feeder, count, length)]]
+                                [[subcode, this.readUnrecognized(feeder, count, length)]]
                             );
                             break;
                     }
