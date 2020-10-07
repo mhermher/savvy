@@ -1,12 +1,4 @@
-export interface Feeder {
-    jump : (position : number) => Promise<void>,
-    next : (size : number) => Promise<ArrayBuffer>,
-    position : () => number,
-    done : () => boolean
-}
-
 export interface Meta {
-    magic : string,
     product : string,
     layout : number,
     variables : number,
@@ -21,10 +13,7 @@ export interface Meta {
 
 export interface Header {
     start : number,
-    end : number,
-    typeCode : number,
-    printCode : number,
-    writeCode : number,
+    code : number,
     name : string,
     description : string,
     missing : {
@@ -66,6 +55,8 @@ export interface Internal {
     labels : Map<string, string>,
     longs : Map<string, number>,
     factors : Array<Factor>,
+    extra : Array<ArrayBuffer>,
+    unrecognized : Array<[number, ArrayBuffer]>,
     finished : number
 }
 

@@ -1,4 +1,42 @@
-import { Display, Factor, Feeder, Header, Internal, Meta, Parsed, Row, Schema } from './types';
+import { Display, Factor, Header, Internal, Meta, Parsed, Row, Schema } from './types';
+
+export class Feeder {
+    private buffer : ArrayBuffer;
+    private cursor : number;
+    constructor(buffer : ArrayBuffer) {
+        this.buffer = buffer;
+        this.cursor = 0;
+    }
+    public jump(position : number) : void {
+        if (position < 0 || position > this.buffer.byteLength){
+            throw new Error(
+                'Jump to out-of-bounds position'
+            )
+        }
+        this.cursor = position;
+    }
+    public next(size : number) : ArrayBuffer {
+        if (!this.buffer || this.cursor + size > this.buffer.byteLength){
+            throw new Error(
+                'Unexpected End of File'
+            );
+        } else {
+            this.cursor += size;
+            return(
+                this.buffer.slice(
+                    this.cursor - size,
+                    this.cursor
+                )
+            );
+        }
+    }
+    public position() : number {
+        return(this.cursor);
+    }
+    public done() : boolean {
+        return(this.cursor === this.buffer.byteLength);
+    }
+}
 
 class Instructor {
     private feeder : Feeder;
@@ -12,48 +50,34 @@ class Instructor {
         this.cursor = 8;
         this.decoder = new TextDecoder();
     }
-    public instruct() : Promise<number> {
+    private instruct() : number {
         if (this.cursor > 7){
-            return(
-                this.feeder.next(8).then(
-                    chunk => {
-                        this.cursor = 0;
-                        this.instructions = new DataView(chunk);
-                    }
-                ).then(this.instruct)
-            )
-        } else {
-            const instruction = this.instructions.getUint8(this.cursor++);
-            if (instruction){
-                return(Promise.resolve(instruction));
-            } else {
-                return(this.instruct());
-            }
+            this.instructions = new DataView(this.feeder.next(8));
+            this.cursor = 0;
+        }
+        let instruction : number;
+        do {
+            instruction = this.instructions.getUint8(this.cursor++);
+        } while (instruction === 0);
+        return(instruction);
+    }
+    public nextNumber() : number {
+        const code = this.instruct();
+        switch(code){
+            case 252: throw new Error('Unexpected end of records.');
+            case 253: return(new DataView(this.feeder.next(8)).getFloat64(0, true));
+            case 254: throw new Error('Cell code type mismatch');
+            case 255: return(null);
+            default: return(code - this.bias);
         }
     }
-    public getNumber(code : number) : Promise<number> {
+    public nextString() : string {
+        const code = this.instruct();
         switch(code){
-            case 252: throw new Error('Unexpected end of records.')
-            case 253: return(
-                this.feeder.next(8).then(
-                    chunk => (new DataView(chunk)).getFloat64(0, true)
-                )
-            )
-            case 254: throw new Error('Cell code type mismatch')
-            case 255: return(Promise.resolve(null))
-            default: return(Promise.resolve(code - this.bias))
-        }
-    }
-    public getString(code : number) : Promise<string> {
-        switch(code){
-            case 252: throw new Error('Unexpected end of records.')
-            case 253: return(
-                this.feeder.next(8).then(
-                    chunk => this.decoder.decode(chunk)
-                )
-            )
-            case 254: return(Promise.resolve(''))
-            case 255: return(Promise.resolve(null))
+            case 252: throw new Error('Unexpected end of records.');
+            case 253: return(this.decoder.decode(this.feeder.next(8)));
+            case 254: return('');
+            case 255: return(null);
             default: throw new Error('Default code not supported for strings.')
         }
     }
@@ -62,21 +86,12 @@ class Instructor {
 export class FileReader {
     private decoder : TextDecoder;
     private log : Array<string>;
-    private readFieldDesc(chunker : Feeder) : Promise<string> {
-        return(
-            chunker.next(4).then(chunk => {
-                const length = new DataView(chunk).getInt32(0, true);
-                if (length % 4){
-                    return(length + (4 - (length % 4)));
-                } else {
-                    return(length);
-                }
-            }).then(
-                length => chunker.next(length)
-            ).then(
-                chunk => this.decoder.decode(chunk).trim()
-            )
-        )
+    private readFieldDesc(feeder : Feeder) : string {
+        let length = new DataView(feeder.next(4)).getInt32(0, true);
+        if (length % 4){
+            length = length + (4 - (length % 4));
+        }
+        return(this.decoder.decode(feeder.next(length)).trim());
     }
     private readFieldMissingCodes(view : DataView, count : number) : Array<number> {
         const readArray = new Array(count).fill(0);
@@ -98,290 +113,200 @@ export class FileReader {
             view.getFloat64(8, true)
         ]);
     }
-    private readFieldMissing(chunker : Feeder, numeric : boolean, code : number) : Promise<Header['missing']> {
-        return(
-            chunker.next(8 * Math.abs(code)).then(chunk => {
-                const dview = new DataView(chunk);
-                return({
-                    codes : (numeric && code > 0
-                        ? this.readFieldMissingCodes(dview, code)
-                        : (numeric && code === -3
-                            ? this.readFieldMissingCodes(dview, 3).slice(2)
-                            : []
-                        )
-                    ),
-                    range : (numeric && code < 0
-                        ? this.readFieldMissingRange(dview)
-                        : [undefined, undefined]
-                    ),
-                    strings : (!numeric && code > 0
-                        ? this.readFieldMissingStrings(chunk, code)
-                        : []
-                    )
-                })
-            })
-        )
-    }
-    private readField(chunker : Feeder) : Promise<Header> {
-        this.log.push('Reading Field at ' + chunker.position());
-        const start = chunker.position();
-        return(
-            chunker.next(28).then(
-                chunk => {
-                    const dview = new DataView(chunk);
-                    return({
-                        typeCode : dview.getInt32(0, true),
-                        labeled : dview.getInt32(4,  true),
-                        missings : dview.getInt32(8, true),
-                        printCode : dview.getInt32(12, true),
-                        writeCode : dview.getInt32(16, true),
-                        name : this.decoder.decode(chunk.slice(20, 28)).trim()
-                    })
-                }
-            ).then(
-                partial => {
-                    if (partial.labeled) {
-                        return(
-                            this.readFieldDesc(chunker).then(
-                                description => ({
-                                    ...partial,
-                                    description : description
-                                })
-                            )
-                        )
-                    } else {
-                        return({...partial, description : ''})
-                    }
-                }
-            ).then(
-                partial => {
-                    if (partial.missings){
-                        return(
-                            this.readFieldMissing(
-                                chunker,
-                                partial.typeCode === 0,
-                                partial.missings
-                            ).then(
-                                missing => ({
-                                    ...partial,
-                                    missing : missing
-                                })
-                            )
-                        )
-                    } else {
-                        return({
-                            ...partial,
-                            missing : {
-                                codes : [],
-                                range : [undefined, undefined] as [number, number],
-                                strings : []
-                            }
-                        })
-                    }
-                }
-            ).then(
-                partial => ({
-                    start : start,
-                    end : chunker.position(),
-                    typeCode : partial.typeCode,
-                    printCode : partial.printCode,
-                    writeCode : partial.writeCode,
-                    name : partial.name,
-                    description : partial.description,
-                    missing : partial.missing
-                })
-            )
-        )
-    }
-    private recurseLevel(chunker : Feeder, count : number) : Promise<Array<[number, string]>> {
-        this.log.push('Factor level at ' + chunker.position());
-        if (count){
-            return(
-                chunker.next(9).then(chunk => {
-                    const dview = new DataView(chunk);
-                    const length = dview.getInt8(8);
-                    return({
-                        level : dview.getFloat64(0, true),
-                        length : length,
-                        read : ((length + 1) % 8
-                            ? length + (8 - ((length + 1) % 8))
-                            : length
-                        )
-                    });
-                }).then(
-                    parsed => chunker.next(parsed.read).then(chunk => [
-                        parsed.level,
-                        this.decoder.decode(chunk.slice(0, parsed.length))
-                    ] as [number, string])
-                ).then(
-                    level => this.recurseLevel(chunker, count - 1).then(
-                        result => [level].concat(result)
-                    )
+    private readFieldMissing(feeder : Feeder, numeric : boolean, code : number) : Header['missing'] {
+        const chunk = feeder.next(8 * Math.abs(code));
+        const view = new DataView(chunk);
+        return({
+            codes : (numeric && code > 0
+                ? this.readFieldMissingCodes(view, code)
+                : (numeric && code === -3
+                    ? this.readFieldMissingCodes(view, 3).slice(2)
+                    : []
                 )
-            );
-        } else {
-            return(Promise.resolve([]))
+            ),
+            range : (numeric && code < 0
+                ? this.readFieldMissingRange(view)
+                : [undefined, undefined]
+            ),
+            strings : (!numeric && code > 0
+                ? this.readFieldMissingStrings(chunk, code)
+                : []
+            )
+        })
+    }
+    private readField(feeder : Feeder) : Header {
+        this.log.push('Reading Field at ' + feeder.position());
+        const start = feeder.position();
+        const chunk = feeder.next(28);
+        const view = new DataView(chunk);
+        const code = view.getInt32(0, true);
+        const labeled = view.getInt32(4, true);
+        const missings = view.getInt32(8, true);
+        const name = this.decoder.decode(chunk.slice(20, 28));
+        const description = (labeled
+            ? this.readFieldDesc(feeder)
+            : ''
+        );
+        const missing = (missings
+            ? this.readFieldMissing(feeder, code === 0, missings)
+            : {
+                codes : [],
+                range : [undefined, undefined] as [number, number],
+                strings : []
+            }
+        );
+        return({
+            start : start,
+            code : code,
+            name : name,
+            description : description,
+            missing : missing
+        });
+    }
+    private getLevel(feeder : Feeder) : [number, string] {
+        this.log.push('Factor level at ' + feeder.position());
+        const view = new DataView(feeder.next(9));
+        const length = view.getInt8(8);
+        const size = ((length + 1) % 8
+            ? length + (8 - ((length + 1) % 8))
+            : length
+        );
+        return([
+            view.getFloat64(0, true),
+            this.decoder.decode(feeder.next(size)).substring(0, length)
+        ]);
+    }
+    private readFactor(feeder : Feeder) : Factor {
+        this.log.push('Factor definition at ' + feeder.position());
+        const count = (new DataView(feeder.next(4))).getInt32(0, true);
+        const readArray = new Array(count).fill(0);
+        const levels = new Map(readArray.map(() => this.getLevel(feeder)));
+        const view = new DataView(feeder.next(8));
+        const magic = view.getInt32(0, true);
+        const icount = view.getInt32(4, true);
+        if (magic !== 4){
+            throw new Error(
+                'Labels read error. ' +
+                'Magic value Expected: 4 ' +
+                'Actual: ' + magic
+            )
         }
+        const iview = new DataView(feeder.next(4 * icount));
+        const indices = new Set((new Array(icount).fill(0)).map(
+            (_, idx) => iview.getInt32(idx * 4, true)
+        ));
+        return({
+            map : levels,
+            indices : indices
+        });
     }
-    private readFactor(chunker : Feeder) : Promise<Factor> {
-        this.log.push('Factor definition at ' + chunker.position());
+    private readDocument(feeder : Feeder) : Array<string> {
+        this.log.push('Sys Document at ' + feeder.position());
+        const count = new DataView(feeder.next(4)).getInt32(0, true);
+        const chunk = feeder.next(count * 80);
+        const docArray = new Array(count).fill(0);
         return(
-            chunker.next(4).then(
-                chunk => (new DataView(chunk)).getInt32(0, true)
-            ).then(
-                count => this.recurseLevel(chunker, count)
-            ).then(
-                levels => new Map(levels)
-            ).then(
-                map => chunker.next(8).then(
-                    chunk => {
-                        const dview = new DataView(chunk);
-                        const magic = dview.getInt32(0, true);
-                        const count = dview.getInt32(4, true);
-                        if (magic !== 4){
-                            throw new Error(
-                                'Labels read error. ' +
-                                'Magic value Expected: 4 ' +
-                                'Actual: ' + magic
-                            )
-                        }
-                        return(count);
-                    }
-                ).then(
-                    count => chunker.next(count * 4)
-                ).then(
-                    chunk => {
-                        const dview = new DataView(chunk);
-                        const indices = new Array(chunk.byteLength / 4).fill(0).map(
-                            (_, idx) => dview.getInt32(idx * 4, true)
-                        );
-                        return(indices)
-                    }
-                ).then(
-                    indices => ({
-                        map : map,
-                        indices : new Set(indices)
-                    })
+            docArray.map(
+                (_, idx) => this.decoder.decode(
+                    chunk.slice(idx * 80, idx * 80 + 80)
                 )
             )
-        )
+        );
     }
-    private readDocument(chunker : Feeder) : Promise<Array<string>> {
-        this.log.push('Sys Document at ' + chunker.position());
+    private readSysInteger(feeder : Feeder) : Internal['integer'] {
+        this.log.push('Sys Integer at ' + feeder.position());
+        const view = new DataView(feeder.next(32));
+        return({
+            major : view.getInt32(0, true),
+            minor : view.getInt32(4, true),
+            revision : view.getInt32(8, true),
+            machine : view.getInt32(12, true),
+            float : view.getInt32(16, true),
+            compression : view.getInt32(20, true),
+            endianness : view.getInt32(24, true),
+            character : view.getInt32(28, true)
+        });
+    }
+    private readSysFloat(feeder : Feeder) : Internal['float'] {
+        this.log.push('Sys Float at ' + feeder.position());
+        const view = new DataView(feeder.next(24));
+        return({
+            missing : view.getFloat64(0, true),
+            high : view.getFloat64(8, true),
+            low : view.getFloat64(16, true)
+        });
+    }
+    private readSysDisplay(feeder : Feeder, count : number) : Array<Display> {
+        this.log.push('Sys Display at ' + feeder.position());
+        const view = new DataView(feeder.next(count * 12));
+        const dispArray = new Array(count).fill(0);
         return(
-            chunker.next(4).then(
-                chunk => (new DataView(chunk)).getInt32(0, true)
-            ).then(
-                count => chunker.next(count * 80)
-            ).then(
-                chunk => {
-                    const docArray = new Array(chunk.byteLength / 80).fill(0);
-                    return(
-                        docArray.map((_, idx) => this.decoder.decode(
-                            chunk.slice(idx * 80, idx * 80 + 80)
-                        ))
-                    )
-                }
+            dispArray.map(
+                (_, idx) => ({
+                    type : view.getInt32(idx * 12, true) as 1 | 2 | 3,
+                    width : view.getInt32(idx * 12 + 4, true),
+                    align : view.getInt32(idx * 12 + 8, true) as 0 | 1 | 2
+                })
             )
-        )
+        );
     }
-    private readSysInteger(chunker : Feeder) : Promise<Internal['integer']> {
-        this.log.push('Sys Integer at ' + chunker.position());
+    private readLabels(feeder : Feeder, size : number) : Map<string, string> {
+        this.log.push('Labels at ' + feeder.position());
+        const raw = this.decoder.decode(feeder.next(size));
         return(
-            chunker.next(32).then(chunk => {
-                const dview = new DataView(chunk);
-                return({
-                    major : dview.getInt32(0, true),
-                    minor : dview.getInt32(4, true),
-                    revision : dview.getInt32(8, true),
-                    machine : dview.getInt32(12, true),
-                    float : dview.getInt32(16, true),
-                    compression : dview.getInt32(20, true),
-                    endianness : dview.getInt32(24, true),
-                    character : dview.getInt32(28, true)
-                })
-            })
-        )
-    }
-    private readSysFloat(chunker : Feeder) : Promise<Internal['float']> {
-        this.log.push('Sys Float at ' + chunker.position());
-        return(
-            chunker.next(24).then(chunk => {
-                const dview = new DataView(chunk);
-                return({
-                    missing : dview.getFloat64(0, true),
-                    high : dview.getFloat64(8, true),
-                    low : dview.getFloat64(16, true)
-                })
-            })
-        )
-    }
-    private readSysDisplay(chunker : Feeder, count : number) : Promise<Array<Display>> {
-        this.log.push('Sys Display at ' + chunker.position());
-        return(
-            chunker.next(count * 12).then(chunk => {
-                const dview = new DataView(chunk);
-                const dispArray = new Array(count).fill(0);
-                return(
-                    dispArray.map((_, idx) => ({
-                        type : dview.getInt32(idx * 12, true) as 1 | 2 | 3,
-                        width : dview.getInt32(idx * 12 + 4, true),
-                        align : dview.getInt32(idx * 12 + 8, true) as 0 | 1 | 2
-                    }))
+            new Map(
+                raw.split('\t').map(
+                    str => str.split('=') as [string, string]
                 )
-            })
-        )
+            )
+        );
     }
-    private readLabels(chunker : Feeder, size : number) : Promise<Map<string, string>> {
-        this.log.push('Labels at ' + chunker.position());
+    private readLongWidths(feeder : Feeder, size : number) : Map<string, number> {
+        this.log.push('Long Widths at ' + feeder.position());
+        const raw = this.decoder.decode(feeder.next(size));
+        const rows = raw.split('\t');
         return(
-            chunker.next(size).then(chunk => {
-                const raw = this.decoder.decode(chunk);
-                return(
-                    new Map(
-                        raw.split('\t').map(
-                            str => str.split('=') as [string, string]
-                        )
-                    )
+            new Map(
+                rows.slice(0, rows.length - 1).map(
+                    str => str.split('=') as [string, string]
+                ).map(
+                    ([name, length]) => [name, parseInt(length, 10)]
                 )
-            })
-        )
+            )
+        );
     }
-    private readLongWidths(chunker : Feeder, size : number) : Promise<Map<string, number>> {
-        this.log.push('Long Widths at ' + chunker.position());
-        return(
-            chunker.next(size).then(chunk => {
-                const raw = this.decoder.decode(chunk);
-                const rows = raw.split('\t');
-                return(
-                    new Map(
-                        rows.slice(0, rows.length - 1).map(
-                            str => str.split('=') as [string, string]
-                        ).map(
-                            ([name, length]) => [name, parseInt(length, 10)]
-                        )
-                    )
-                )
-            })
-        )
-    }
-    private readLongLabels(chunker : Feeder, size : number) : Promise<void> {
-        this.log.push('Long Labels at ' + chunker.position());
+    private readLongLabels(feeder : Feeder, size : number) : ArrayBuffer {
+        this.log.push('Long Labels at ' + feeder.position());
         // need to figure out how this works
-        return(
-            chunker.next(size).then(() => Promise.resolve())
-        )
+        return(feeder.next(size));
     }
-    private readSpecial(chunker : Feeder) : Promise<Partial<Internal>> {
-        this.log.push('Special Code at ' + chunker.position())
-        return(
-            chunker.next(12).then(
-                chunk => {
-                    const dview = new DataView(chunk);
-                    const code = dview.getInt32(0, true);
-                    const length = dview.getInt32(4, true);
-                    const count = dview.getInt32(8, true);
-                    switch(code){
+    private readInternal(feeder : Feeder) : Internal {
+        this.log.push('Reading Internal');
+        const partial : Partial<Internal> = {};
+        let code : number;
+        let subcode : number;
+        let subview : DataView;
+        let length : number;
+        let count : number;
+        while(!partial.finished){
+            code = (new DataView(feeder.next(4))).getInt32(0, true);
+            switch(code){
+                case 3:
+                    partial.factors = (partial.factors ?? []).concat(
+                        this.readFactor(feeder)
+                    );
+                    break;
+                case 6:
+                    partial.documents = (partial.documents ?? []).concat(
+                        this.readDocument(feeder)
+                    );
+                    break;
+                case 7:
+                    subview = new DataView(feeder.next(12));
+                    subcode = subview.getInt32(0, true);
+                    length = subview.getInt32(4, true);
+                    count = subview.getInt32(8, true);
+                    switch(subcode){
                         case 3:
                             this.log.push('Subcode 3');
                             if (length * count !== 32){
@@ -391,13 +316,8 @@ export class FileReader {
                                     'Actual: ' + (length * count)
                                 )
                             }
-                            return(
-                                this.readSysInteger(chunker).then(
-                                    sysInteger => ({
-                                        integer : sysInteger
-                                    })
-                                )
-                            );
+                            partial.integer = this.readSysInteger(feeder);
+                            break;
                         case 4:
                             this.log.push('Subcode 4');
                             if (length * count !== 24){
@@ -407,13 +327,8 @@ export class FileReader {
                                     'Actual: ' + (length * count)
                                 )
                             }
-                            return(
-                                this.readSysFloat(chunker).then(
-                                    sysFloat => ({
-                                        float : sysFloat
-                                    })
-                                )
-                            );
+                            partial.float = this.readSysFloat(feeder);
+                            break;
                         case 11:
                             this.log.push('Subcode 11');
                             if (length !== 4) {
@@ -430,298 +345,204 @@ export class FileReader {
                                     'Actual: ' + length
                                 )
                             }
-                            return(
-                                this.readSysDisplay(chunker, count / 3).then(
-                                    display => ({display})
-                                )
+                            partial.display = (partial.display ?? []).concat(
+                                this.readSysDisplay(feeder, count / 3)
                             );
+                            break;
                         case 13:
                             this.log.push('Subcode 13');
-                            return(
-                                this.readLabels(chunker, count * length).then(
-                                    labels => ({labels})
-                                )
-                            );
+                            partial.labels = new Map([
+                                ...(partial.labels ?? []),
+                                ...this.readLabels(feeder, count * length)
+                            ]);
+                            break;
                         case 14:
                             this.log.push('Subcode 14');
-                            return(
-                                this.readLongWidths(chunker, count * length).then(
-                                    longs => ({longs})
-                                )
-                            );
+                            partial.longs = new Map([
+                                ...(partial.longs ?? []),
+                                ...this.readLongWidths(feeder, count * length)
+                            ]);
+                            break;
                         case 21:
                             this.log.push('Subcode 21');
-                            return(
-                                this.readLongLabels(chunker, count * length).then(
-                                    () => ({})
-                                )
-                            )
-                        default:
-                            return(
-                                chunker.next(count * length).then(() => ({}))
-                            )
-                    }
-                }
-            )
-        )
-    }
-    private mergeInternal(left : Partial<Internal>, right : Partial<Internal>) : Partial<Internal> {
-        return({
-            ...left,
-            ...right,
-            display : (left.display ?? []).concat(right.display ?? []),
-            documents : (left.documents ?? []).concat(right.documents ?? []),
-            labels : new Map([
-                ...(left.labels ?? []),
-                ...(right.labels ?? [])
-            ]),
-            longs : new Map([
-                ...(left.longs ?? []),
-                ...(right.longs ?? [])
-            ]),
-            factors : (left.factors ?? []).concat(right.factors ?? []),
-            finished : left.finished || right.finished || 0
-        })
-    }
-    private recurseInternal(chunker : Feeder) : Promise<Partial<Internal>> {
-        this.log.push('Internal setting at position:' + chunker.position());
-        return(
-            chunker.next(4).then(
-                chunk => (new DataView(chunk).getInt32(0, true))
-            ).then(
-                code => {
-                    this.log.push('Code:' + code);
-                    switch(code){
-                        case 3:
-                            return(
-                                this.readFactor(chunker).then(
-                                    factor => ({
-                                        factors : [factor]
-                                    })
-                                )
-                            )
-                        case 6:
-                            return(
-                                this.readDocument(chunker).then(
-                                    document => ({
-                                        documents : [document]
-                                    })
-                                )
-                            )
-                        case 7:
-                            return(this.readSpecial(chunker));
-                        case 999:
-                            return(
-                                chunker.next(4).then(() => ({
-                                    finished : chunker.position()
-                                }))
-                            )
-                        default:
-                            throw new Error(
-                                'Internal Code Expected : [3, 6, 7, 999]; Actual : ' +
-                                code
+                            partial.extra = (partial.extra ?? []).concat(
+                                this.readLongLabels(feeder, count * length)
                             );
+                            break;
+                        default:
+                            this.log.push('Unrecognized Subcode');
+                            partial.unrecognized = (partial.unrecognized ?? []).concat(
+                                [code, feeder.next(count * length)]
+                            );
+                            break;
                     }
-                }
-            ).then(
-                partial => {
-                    if (partial.finished){
-                        return(partial)
-                    } else {
-                        return(
-                            this.recurseInternal(chunker).then(
-                                result => this.mergeInternal(partial, result)
-                            )
-                        )
-                    }
-                }
-            )
-        );
+                    break;
+                case 999:
+                    feeder.next(4);
+                    partial.finished = feeder.position();
+                    break;
+                default:
+                    throw new Error(
+                        'Internal Code Expected : [3, 6, 7, 999]; Actual : ' +
+                        code
+                    );
+            }
+        }
+        return({
+            float : partial.float ?? {
+                missing : undefined,
+                high : undefined,
+                low : undefined
+            },
+            integer : partial.integer ?? {
+                major : undefined,
+                minor : undefined,
+                revision : undefined,
+                machine : undefined,
+                float : undefined,
+                compression : undefined,
+                endianness : undefined,
+                character : undefined
+            },
+            display : partial.display ?? [],
+            documents : partial.documents ?? [],
+            labels : partial.labels ?? new Map(),
+            longs : partial.longs ?? new Map(),
+            factors : partial.factors ?? [],
+            extra : partial.extra ?? [],
+            unrecognized : partial.unrecognized ?? [],
+            finished : partial.finished
+        });
     }
-    private readInternal(chunker : Feeder) : Promise<Internal> {
-        this.log.push('Reading Internal');
-        return(
-            this.recurseInternal(chunker).then(
-                partial => ({
-                    float : partial.float ?? {
-                        missing : undefined,
-                        high : undefined,
-                        low : undefined
-                    },
-                    integer : partial.integer ?? {
-                        major : undefined,
-                        minor : undefined,
-                        revision : undefined,
-                        machine : undefined,
-                        float : undefined,
-                        compression : undefined,
-                        endianness : undefined,
-                        character : undefined
-                    },
-                    display : partial.display ?? [],
-                    documents : partial.documents ?? [],
-                    labels : partial.labels ?? new Map(),
-                    longs : partial.longs ?? new Map(),
-                    factors : partial.factors ?? [],
-                    finished : partial.finished
-                })
-            )
-        )
+    private readFields(feeder : Feeder) : Array<Header> {
+        this.log.push('Reading Field at ' + feeder.position());
+        let code : number;
+        const fields : Array<Header> = [];
+        let field : Header;
+        while(true){
+            code = (new DataView(feeder.next(4))).getInt32(0, true);
+            if (code !== 2){
+                feeder.jump(feeder.position() - 4);
+                break;
+            }
+            field = this.readField(feeder);
+            if (field.code > -1){
+                fields.push(field);
+            }
+        }
+        return(fields);
     }
-    private recurseField(chunker : Feeder) : Promise<Array<Header>> {
-        this.log.push('Reading Field at ' + chunker.position());
-        return(
-            chunker.next(4).then(chunk => {
-                const magic = (new DataView(chunk)).getInt32(0, true);
-                if (magic !== 2){
-                    return(
-                        chunker.jump(chunker.position() - 4).then(() => [])
-                    )
-                } else {
-                    return(
-                        this.readField(chunker).then(
-                            header => this.recurseField(chunker).then(
-                                result => {
-                                    if (header.typeCode === -1){
-                                        return(result);
-                                    } else {
-                                        return([header].concat(result))
-                                    }
-                                }
-                            )
-                        )
-                    )
-                }
-            })
-        )
-    }
-    private headerEnd(headers : Array<Header>) : number {
-        return(headers[headers.length - 1].end);
-    }
-    private readCells(instructor : Instructor, header : Header) : Promise<number | string> {
-        if (header.typeCode){
-            return(
-                instructor.instruct().then(instructor.getString)
-            );
+    private readCells(instructor : Instructor, header : Header) : number | string {
+        if (header.code){
+            return(instructor.nextString());
         } else {
-            return(
-                instructor.instruct().then(instructor.getNumber)
-            );
+            return(instructor.nextNumber());
         }
     }
-    private readRow(instructor : Instructor, schema : Schema) : Promise<Row> {
+    private readRow(instructor : Instructor, schema : Schema) : Row {
         return(
-            Promise.all(
-                schema.headers.map(
-                    header => this.readCells(instructor, header).then(
-                        cell => [header.name, cell] as [string, number | string]
-                    )
-                )
-            ).then(
-                cells => new Map(cells)
+            new Map(
+                schema.headers.map(header => [
+                    header.name,
+                    this.readCells(instructor, header)
+                ])
             )
         );
     }
     private readData(chunker : Feeder, schema : Schema) : Promise<Array<Row>> {
-        const readArray = new Array(schema.meta.cases).fill(0);
-        const instructor = new Instructor(chunker, schema.meta.bias);
         return(
-            Promise.all(
-                readArray.map(
-                    () => this.readRow(instructor, schema)
+            new Promise<Array<Row>>((resolve, reject) => {
+                const readArray = new Array(schema.meta.cases).fill(0);
+                const instructor = new Instructor(chunker, schema.meta.bias);
+                resolve(
+                    readArray.map(
+                        () => this.readRow(instructor, schema)
+                    )
                 )
-            )
-        )
+            })
+        );
     }
     constructor(log : Array<string> = []) {
         this.decoder = new TextDecoder();
         this.log = log;
     }
-    public meta(chunker : Feeder) : Promise<Meta> {
+    public meta(feeder : Feeder) : Promise<Meta> {
         this.log.splice(0, this.log.length);
-        const position = chunker.position();
+        const position = feeder.position();
+        feeder.jump(0);
         return(
-            chunker.jump(0).then(
-                () => chunker.next(176).then(
-                    chunk => {
-                        this.log.push('Parsing Meta Fields');
-                        const dview = new DataView(chunk);
-                        const magic = this.decoder.decode(chunk.slice(0, 4));
-                        if (magic !== '$FL2'){
-                            throw new Error(
-                                'File is not a sav. ' +
-                                'Magic key Expected: "$FL2"; ' +
-                                'Actual: ' + magic
-                            );
-                        }
-                        return({
-                            magic : magic,
-                            product : this.decoder.decode(chunk.slice(4, 64)).trim(),
-                            layout : dview.getInt32(64, true),
-                            variables : dview.getInt32(68, true),
-                            compression : dview.getInt32(72, true),
-                            weightIndex : dview.getInt32(76, true),
-                            cases : dview.getInt32(80, true),
-                            bias : dview.getFloat64(84, true),
-                            createdDate : this.decoder.decode(chunk.slice(92, 101)),
-                            createdTime : this.decoder.decode(chunk.slice(101, 109)),
-                            label : this.decoder.decode(chunk.slice(109, 173)).trim()
-                        })
-                    }
-                )
-            ).finally(() => chunker.jump(position))
+            new Promise<Meta>((resolve, reject) => {
+                const chunk = feeder.next(176);
+                const view = new DataView(chunk);
+                const magic = this.decoder.decode(chunk.slice(0, 4));
+                if (magic !== '$FL2'){
+                    reject(new Error(
+                        'File is not a sav. ' +
+                        'Magic key Expected: "$FL2"; ' +
+                        'Actual: ' + magic
+                    ))
+                }
+                resolve({
+                    product : this.decoder.decode(chunk.slice(4, 64)).trim(),
+                    layout : view.getInt32(64, true),
+                    variables : view.getInt32(68, true),
+                    compression : view.getInt32(72, true),
+                    weightIndex : view.getInt32(76, true),
+                    cases : view.getInt32(80, true),
+                    bias : view.getFloat64(84, true),
+                    createdDate : this.decoder.decode(chunk.slice(92, 101)),
+                    createdTime : this.decoder.decode(chunk.slice(101, 109)),
+                    label : this.decoder.decode(chunk.slice(109, 173)).trim()
+                })
+            }).finally(() => feeder.jump(position))
+        )
+    }
+    public headers(feeder : Feeder) : Promise<Array<Header>> {
+        this.log.splice(0, this.log.length);
+        const position = feeder.position();
+        feeder.jump(176);
+        return(
+            Promise.resolve(
+                this.readFields(feeder)
+            ).finally(() => feeder.jump(position))
         );
     }
-    public headers(chunker : Feeder) : Promise<Array<Header>> {
+    public schema(feeder : Feeder) : Promise<Schema> {
         this.log.splice(0, this.log.length);
-        const position = chunker.position();
+        const position = feeder.position();
         return(
-            chunker.jump(176).then(
-                () => this.recurseField(chunker)
-            ).finally(() => chunker.jump(position))
-        );
-    }
-    public schema(chunker : Feeder) : Promise<Schema> {
-        this.log.splice(0, this.log.length);
-        const position = chunker.position();
-        return(
-            this.meta(chunker).then(
+            this.meta(feeder).then(
                 meta => ({
                     meta : meta
                 })
             ).then(
-                partial => chunker.jump(176).then(
-                    () => this.recurseField(chunker).then(
-                        headers => ({
-                            ...partial,
-                            headers : headers
-                        })
-                    )
-                )
-            ).then(
-                partial => this.readInternal(chunker).then(
-                    internal => ({
+                partial => {
+                    feeder.jump(176);
+                    return({
                         ...partial,
-                        internal : internal
+                        headers : this.readFields(feeder)
                     })
-                )
-            ).finally(() => chunker.jump(position))
+                }
+            ).then(
+                partial => ({
+                    ...partial,
+                    internal : this.readInternal(feeder)
+                })
+            ).finally(() => feeder.jump(position))
         );
     }
-    public all(chunker : Feeder) : Promise<Parsed> {
+    public all(feeder : Feeder) : Promise<Parsed> {
         this.log.splice(0, this.log.length);
-        const position = chunker.position();
+        const position = feeder.position();
         return(
-            this.schema(chunker).then(
-                schema => this.readData(chunker, schema).then(
+            this.schema(feeder).then(
+                schema => this.readData(feeder, schema).then(
                     rows => ({
                         ...schema,
                         rows : rows
                     })
                 )
-            ).finally(() => chunker.jump(position))
+            ).finally(() => feeder.jump(position))
         );
     }
 }
-
-export {BlobFeeder, BuffFeeder, FileFeeder} from './feeders'
