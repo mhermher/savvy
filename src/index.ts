@@ -51,12 +51,12 @@ class Instructor {
         this.decoder = new TextDecoder();
     }
     private instruct() : number {
-        if (this.cursor > 7){
-            this.instructions = new DataView(this.feeder.next(8));
-            this.cursor = 0;
-        }
         let instruction : number;
         do {
+            if (this.cursor > 7){
+                this.instructions = new DataView(this.feeder.next(8));
+                this.cursor = 0;
+            }
             instruction = this.instructions.getUint8(this.cursor++);
         } while (instruction === 0);
         return(instruction);
@@ -71,15 +71,23 @@ class Instructor {
             default: return(code - this.bias);
         }
     }
-    public nextString() : string {
-        const code = this.instruct();
-        switch(code){
-            case 252: throw new Error('Unexpected end of records.');
-            case 253: return(this.decoder.decode(this.feeder.next(8)));
-            case 254: return('');
-            case 255: return(null);
-            default: throw new Error('Default code not supported for strings.')
-        }
+    public nextString(length : number) : string {
+        const pieces : Array<string> = [];
+        do {
+            const code = this.instruct();
+            switch(code){
+                case 252: throw new Error('Unexpected end of records.');
+                case 253:
+                    pieces.push(this.decoder.decode(this.feeder.next(8)));
+                    break
+                case 254:
+                    pieces.push('');
+                    break;
+                case 255: return(null);
+                default: throw new Error('Default code not supported for strings.')
+            }
+        } while (--length);
+        return(pieces.join(''));
     }
 }
 
@@ -440,8 +448,9 @@ export class FileReader {
         return(fields);
     }
     private readCells(instructor : Instructor, header : Header) : number | string {
+        this.log.push('Cell: ' + header.name);
         if (header.code){
-            return(instructor.nextString());
+            return(instructor.nextString(Math.ceil(header.code / 8)));
         } else {
             return(instructor.nextNumber());
         }
@@ -456,14 +465,18 @@ export class FileReader {
             )
         );
     }
-    private readData(chunker : Feeder, schema : Schema) : Promise<Array<Row>> {
+    private readData(feeder : Feeder, schema : Schema) : Promise<Array<Row>> {
+        this.log.push('Reading Data')
         return(
             new Promise<Array<Row>>((resolve, reject) => {
                 const readArray = new Array(schema.meta.cases).fill(0);
-                const instructor = new Instructor(chunker, schema.meta.bias);
+                const instructor = new Instructor(feeder, schema.meta.bias);
                 resolve(
                     readArray.map(
-                        () => this.readRow(instructor, schema)
+                        (_, idx) => {
+                            this.log.push('Row: ' + idx);
+                            return(this.readRow(instructor, schema))
+                        }
                     )
                 )
             })
@@ -543,12 +556,17 @@ export class FileReader {
         const position = feeder.position();
         return(
             this.schema(feeder).then(
-                schema => this.readData(feeder, schema).then(
-                    rows => ({
-                        ...schema,
-                        rows : rows
-                    })
-                )
+                schema => {
+                    feeder.jump(schema.internal.finished);
+                    return(
+                        this.readData(feeder, schema).then(
+                            rows => ({
+                                ...schema,
+                                rows : rows
+                            })
+                        )
+                    );
+                }
             ).finally(() => feeder.jump(position))
         );
     }
