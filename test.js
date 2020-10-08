@@ -7,11 +7,7 @@ let reader = new svy.FileReader(log);
 let savau = new svy.Feeder(fs.readFileSync('C:/Users/Mher/Downloads/SEP17_ALL_Draft01_IntUse/SEP17_AU_Draft01_IntUse.sav').buffer);
 reader.all(savau).then(parsed => dataau = parsed);
 
-
-let savbr = new svy.Feeder(fs.readFileSync('C:/Users/Mher/Downloads/SEP17_ALL_Draft01_IntUse/SEP17_BR_Draft01_IntUse.sav').buffer);
-
-let dv = new DataView(raw.buffer);
-let decoder = new TextDecoder();
+let ds = new svy.Savvy(dataau);
 
 /*
     Create Brutal Case

@@ -1,4 +1,3 @@
-import { parse } from "path";
 import { Header, Parsed, Row } from "./types";
 
 export interface DataSet {
@@ -135,8 +134,8 @@ class View implements DataSet {
     private keys : Array<string>;
     constructor(parent : Savvy, indices : Array<number>, keys : Array<string>){
         this.parent = parent;
-        this.indices = indices.slice();
-        this.keys = keys.slice();
+        this.indices = indices?.slice() ?? new Array(parent.n).fill(0).map((_, idx) => idx);
+        this.keys = keys?.slice() ?? parent.names;
     }
     public get n() : number {
         return(this.indices.length);
@@ -180,10 +179,10 @@ export class Savvy implements DataSet {
     private overflows : Map<string, Array<string>>;
     private fields : Map<string, Column>;
     private _labels : Map<string, string>;
-    private _description : Map<string, string>;
+    private _descriptions : Map<string, string>;
     constructor(parsed : Parsed) {
         this.cases = parsed.meta.cases;
-        this.labels = parsed.internal.labels;
+        this._labels = parsed.internal.labels;
         this.data = parsed.rows;
         this.factors = new Map(
             parsed.headers.map(header => [header.name, new Map()])
@@ -198,11 +197,12 @@ export class Savvy implements DataSet {
         );
         this.fields = new Map();
         this.overflows = new Map();
+        this._descriptions = new Map();
         let j : number = 0;
         for (let i = 0; i < parsed.headers.length; i++){
             j = i;
             const header = parsed.headers[i];
-            this._description.set(header.name, header.description);
+            this._descriptions.set(header.name, header.description);
             if (header.code){
                 const overflow : Array<string> = [];
                 let length = parsed.internal.longs.get(header.name) ?? 0;
@@ -287,18 +287,16 @@ export class Savvy implements DataSet {
         ]);
     }
     public get descriptions() : Map<string, string> {
-        return(new Map([...this._description]));
+        return(new Map([...this._descriptions]));
     }
     public set descriptions(descriptions : Map<string, string>) {
-        this._description = new Map([
-            ...this._description,
+        this._descriptions = new Map([
+            ...this._descriptions,
             ...descriptions
         ]);
     }
     public row(index : number) : Row {
-        return({
-            ...this.data[index]
-        });
+        return(new Map([...this.data[index]]));
     }
     public col(key : string) : Array<number> | Array<string> | Array<boolean> {
         return(
@@ -307,7 +305,7 @@ export class Savvy implements DataSet {
             ) as Array<number> | Array<string> | Array<boolean>
         )
     }
-    public view(indices : Array<number>, fields : Array<string>) : DataSet {
+    public view(indices? : Array<number>, fields? : Array<string>) : DataSet {
         return(
             new View(
                 this,
