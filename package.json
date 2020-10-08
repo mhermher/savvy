@@ -1,11 +1,11 @@
 {
-  "name": "savvy",
+  "name": "jsavvy",
   "version": "0.0.1",
   "description": "Read .sav files (SPSS, PSPP) in a browser or in node.js",
   "main": "./dist/savvy.js",
   "keywords": ["sav", "spss"],
   "scripts": {
-    "start": "webpack"
+    "build": "webpack"
   },
   "repository": {
     "type": "git",

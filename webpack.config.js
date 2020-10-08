@@ -34,7 +34,7 @@ module.exports = {
         ]
     },
     output : {
-        filename : 'savvy.js',
+        filename : 'index.js',
         path : path.resolve(__dirname, 'dist'),
         library : 'savvy',
         libraryTarget : 'umd',
