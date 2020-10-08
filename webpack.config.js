@@ -1,5 +1,6 @@
 const path = require('path');
 const externals = require('webpack-node-externals');
+const TypedocWebpackPlugin = require('typedoc-webpack-plugin');
 
 module.exports = {
     mode : 'none',

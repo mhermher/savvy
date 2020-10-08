@@ -793,4 +793,5 @@ export class SavParser {
     }
 }
 
+export {Display, Factor, Header, Internal, Meta, Parsed, Row, Schema};
 export {Savvy} from './dataset';
