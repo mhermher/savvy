@@ -66,7 +66,7 @@ export interface Schema {
     internal : Internal
 }
 
-export type Row = Map<string, string | number>;
+export type Row = Map<string, string | number | boolean>;
 
 export interface Parsed extends Schema {
     rows : Array<Row>
