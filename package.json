@@ -1,18 +1,19 @@
 {
   "name": "savvy",
   "version": "0.0.1",
-  "description": "Read .sav files in a browser",
+  "description": "Read .sav files (SPSS, PSPP) in a browser or in node.js",
   "main": "./dist/savvy.js",
+  "keywords": ["sav", "spss"],
   "scripts": {
-    "start": "webpack",
-    "test": "node ./test.js"
+    "start": "webpack"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mhermher/savvy.git"
   },
-  "author": "",
-  "license": "ISC",
+  "files": ["dist/"],
+  "author": "Mher Alaverdyan",
+  "license": "BSD-2-Clause",
   "bugs": {
     "url": "https://github.com/mhermher/savvy/issues"
   },
