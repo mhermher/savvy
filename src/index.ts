@@ -571,3 +571,5 @@ export class FileReader {
         );
     }
 }
+
+export {Savvy} from './dataset';
