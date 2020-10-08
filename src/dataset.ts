@@ -1,12 +1,35 @@
 import { Header, Parsed, Row } from "./types";
 
+/**
+ * An tabular object with rows and columns and cells values of either
+ * number, string, or boolean
+ */
 export interface DataSet {
+    /** The number of cases */
     n : number,
+    /** The names of the columns */
     names : Array<string>,
+    /** The map of unique column names to descriptive labels */
     labels : Map<string, string>,
+    /**
+     * Get a single row of data as a {@link Map} dictionary of key-values
+     * @param index the row index
+     * @returns a {@link Row}
+     */
     row(index : number) : Row,
+    /**
+     * Get a single column of data as an Array
+     * @param key the name of the column
+     * @returns an Array of either numbers, strings or booleans
+     */
     col(key : string) : Array<number> | Array<string> | Array<boolean>
-    view(indices : Array<number>, keys : Array<string>) : DataSet
+    /**
+     * Subset the object by row and/or column identifiers
+     * @param indices an optional Array of row indices
+     * @param keys an optional Array of column names
+     * @returns a subset {@link DataSet}
+     */
+    view(indices? : Array<number>, keys? : Array<string>) : DataSet
 }
 
 abstract class Column<T = string | number | boolean> {
@@ -169,6 +192,9 @@ class View implements DataSet {
     }
 }
 
+/**
+ * A DataSet subclass that can be constructed from a {@link Parsed} object
+ */
 export class Savvy implements DataSet {
     private static pad(code : number) : number {
         return(8 * Math.ceil(code / 8));
@@ -180,6 +206,10 @@ export class Savvy implements DataSet {
     private fields : Map<string, Column>;
     private _labels : Map<string, string>;
     private _descriptions : Map<string, string>;
+    /**
+     *
+     * @param parsed a {@link Parsed} object generated with a {@link SavParser}
+     */
     constructor(parsed : Parsed) {
         this.cases = parsed.meta.cases;
         this._labels = parsed.internal.labels;
@@ -286,6 +316,9 @@ export class Savvy implements DataSet {
             ...labels
         ]);
     }
+    /**
+     * A map of of unique column keys to longer descriptions
+     */
     public get descriptions() : Map<string, string> {
         return(new Map([...this._descriptions]));
     }
