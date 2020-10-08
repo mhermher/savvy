@@ -3,7 +3,7 @@
 Read all fields from a .sav file.
 All fields include the full Schema and all data cells as a Row[]
 
-From a node.js {@link Buffer} using `fs.readFile`
+From a node.js Buffer using `fs.readFile`
 ```
 fs = require('fs');
 
@@ -25,7 +25,7 @@ parser.all(
 
 In the browser with File API
 ```
-    <input type="file" onchange = "onChange(event)"></input>
+<input type="file" onchange = "onChange(event)"></input>
 ```
 ```
 const all;
