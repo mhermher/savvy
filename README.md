@@ -43,3 +43,22 @@ function onChange(event){
     reader.readAsArrayBuffer(file);
 }
 ```
+
+Parsing less than the complete data file
+```
+const parser = new SavParser();
+
+// read only the meta fields from a sav file
+parser.meta(new Feeder(buffer)).then(parsed => {/* do stuff */});
+
+// read only the header fields from a sav file
+// Header here refers to the head of the columns of the data, i.e.
+// properties of the columns in the data file
+parser.headers(new Feeder(buffer)).then(parsed => {/* do stuff */});
+
+// read all schema fields from a sav file
+// Schema here refers to all information except for the data cells themselves
+parser.schema(new Feeder(buffer)).then(parsed => {/* do stuff */});
+```
+
+See types.d.ts file for how parsed data is encoded
