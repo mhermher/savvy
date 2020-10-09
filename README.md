@@ -3,6 +3,12 @@
 Read all fields from a .sav file.
 All fields include the full Schema and all data cells as a Row[]
 
+Still in development:
+TODO: expose objects of Column classes
+TODO: concatenate long string column values
+TODO: uncompressed data files
+TODO: unrecognized codes
+
 From a node.js Buffer using `fs.readFile`
 ```
 fs = require('fs');
@@ -59,6 +65,27 @@ parser.headers(new Feeder(buffer)).then(parsed => {/* do stuff */});
 // read all schema fields from a sav file
 // Schema here refers to all information except for the data cells themselves
 parser.schema(new Feeder(buffer)).then(parsed => {/* do stuff */});
+```
+
+DataSet interface for parsed data
+Savvy class implements DataSet
+```
+const parser = new SavParser();
+let dataset;
+parser.all(new Feeder(buffer)).then(
+    parsed => dataset = new Savvy(parsed)
+)
+// n : number - number of cases
+dataset.n
+// names : Array<string> - column names (short unique names)
+dataset.names
+// labels : Map<string, string> - column long labels (key-value by unique name)
+dataset.labels
+// row(index : number) : Map<string, number | string> - get a row as key-value map
+dataset.row(0)
+// col(key : string) : Array<number> | Array<string> - get a column as an array
+dataset.col('IDField')
+// view(indices? : Array<number>, keys? : Array<string>) : DataSet - subset by rows/columns
 ```
 
 See types.d.ts file for how parsed data is encoded

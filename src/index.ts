@@ -778,6 +778,9 @@ export class SavParser {
         return(
             this.schema(feeder).then(
                 schema => {
+                    if (schema.internal.integer.compression !== 1){
+                        throw new Error('Uncompressed data parse not implemented');
+                    }
                     feeder.jump(schema.internal.finished);
                     return(
                         this.readData(feeder, schema).then(
