@@ -21,7 +21,7 @@ fs.readFile('some/path/to/file.sav', (err, data) => {
         result => all = result
     )
 });
-// with syncronous readFileSync
+// with syncronous `readFileSync`
 parser.all(
     new Feeder(fs.readFileSync('/some/path/to/file.sav').buffer)
 ).then(
@@ -31,7 +31,7 @@ parser.all(
 
 In the browser with File API
 ```
-<input type="file" onchange = "onChange(event)"></input>
+<input type="file" onchange = "onChange"></input>
 ```
 ```
 const all;
