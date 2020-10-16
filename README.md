@@ -14,7 +14,7 @@ From a node.js Buffer using `fs.readFile`
 fs = require('fs');
 
 let all;
-const parser = new SavParser()
+const parser = new SavParser();
 // with async readFile
 fs.readFile('some/path/to/file.sav', (err, data) => {
     parser.all(new Feeder(data.buffer)).then(
@@ -26,6 +26,11 @@ parser.all(
     new Feeder(fs.readFileSync('/some/path/to/file.sav').buffer)
 ).then(
     parsed => all = parsed
+);
+// nodejs Buffers may need to be sliced when accessing the underlying ArrayBuffer
+// It's always safer to slice from the byteOffset (which commonly is 0)
+new Feeder(
+    buffer.buffer.slice(buffer.byteOffset)
 );
 ```
 
