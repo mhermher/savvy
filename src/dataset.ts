@@ -220,7 +220,7 @@ export class Savvy implements DataSet {
         parsed.internal.factors.forEach(
             entry => entry.indices.forEach(
                 index => this.factors.set(
-                    parsed.headers[index].name,
+                    parsed.headers[index - 1].name,
                     entry.map
                 )
             )
