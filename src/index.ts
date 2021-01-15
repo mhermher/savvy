@@ -63,19 +63,23 @@ export class Feeder {
     }
 }
 
-class Instructor {
+class DataReader {
     private feeder : Feeder;
+    private schema : Schema;
+    private position : number;
     private instructions : DataView;
     private cursor : number;
-    private bias : number;
     private decoder : TextDecoder;
-    constructor(feeder : Feeder, bias : number) {
+    private log : Array<string>;
+    constructor(schema : Schema, feeder : Feeder, log : Array<string> = []) {
         this.feeder = feeder;
-        this.bias = bias;
+        this.position = feeder.position();
         this.cursor = 8;
+        this.schema = schema;
         this.decoder = new TextDecoder();
+        this.log = log;
     }
-    private instruct() : number {
+    private compressedCodes() : number {
         let instruction : number;
         do {
             if (this.cursor > 7){
@@ -86,20 +90,35 @@ class Instructor {
         } while (instruction === 0);
         return(instruction);
     }
-    public nextNumber() : number {
-        const code = this.instruct();
+    private uncompressedNumber() : number {
+        return(
+            new DataView(this.feeder.next(8)).getFloat64(
+                0,
+                this.schema.internal.integer.endianness == 2
+            )
+        )
+    }
+    private uncompressedString(length : number) : string {
+        const pieces : Array<string> = [];
+        do {
+            pieces.concat(this.decoder.decode(this.feeder.next(8)));
+        } while (--length);
+        return(pieces.join(''));
+    }
+    private compressedNumber() : number {
+        const code = this.compressedCodes();
         switch(code){
             case 252: throw new Error('Unexpected end of records.');
             case 253: return(new DataView(this.feeder.next(8)).getFloat64(0, true));
             case 254: throw new Error('Cell code type mismatch');
             case 255: return(null);
-            default: return(code - this.bias);
+            default: return(code - this.schema.meta.bias);
         }
     }
-    public nextString(length : number) : string {
+    private compressedString(length : number) : string {
         const pieces : Array<string> = [];
         do {
-            const code = this.instruct();
+            const code = this.compressedCodes();
             switch(code){
                 case 252: throw new Error('Unexpected end of records.');
                 case 253:
@@ -113,6 +132,44 @@ class Instructor {
             }
         } while (--length);
         return(pieces.join(''));
+    }
+    private readNumber() : number {
+        if (this.schema.meta.compression) {
+            return(this.compressedNumber());
+        } else {
+            return(this.uncompressedNumber());
+        }
+    }
+    private readString(length : number) : string {
+        if (this.schema.meta.compression) {
+            return(this.compressedString(length));
+        } else {
+            return(this.uncompressedString(length));
+        }
+    }
+    private readCell(header : Header) : number | string {
+        this.log.push('Cell: ' + header.name);
+        if (header.code) {
+            return(this.readString(Math.ceil(header.code / 8)));
+        } else {
+            return(this.readNumber());
+        }
+    }
+    private readRow() : Row {
+        return(new Map(
+            this.schema.headers.map(header => [header.name, this.readCell(header)])
+        ))
+    }
+    public read() : Array<Row> {
+        this.feeder.jump(this.schema.internal.finished);
+        const readArray = new Array(this.schema.meta.cases).fill(0).map(
+            (_, idx) => {
+                this.log.push('Row: ' + idx);
+                return(this.readRow())
+            }
+        )
+        this.feeder.jump(this.position);
+        return(readArray);
     }
 }
 
@@ -475,41 +532,6 @@ export class SavParser {
         }
         return(fields);
     }
-    private readCells(instructor : Instructor, header : Header) : number | string {
-        this.log.push('Cell: ' + header.name);
-        if (header.code){
-            return(instructor.nextString(Math.ceil(header.code / 8)));
-        } else {
-            return(instructor.nextNumber());
-        }
-    }
-    private readRow(instructor : Instructor, schema : Schema) : Row {
-        return(
-            new Map(
-                schema.headers.map(header => [
-                    header.name,
-                    this.readCells(instructor, header)
-                ])
-            )
-        );
-    }
-    private readData(feeder : Feeder, schema : Schema) : Promise<Array<Row>> {
-        this.log.push('Reading Data')
-        return(
-            new Promise<Array<Row>>((resolve, reject) => {
-                const readArray = new Array(schema.meta.cases).fill(0);
-                const instructor = new Instructor(feeder, schema.meta.bias);
-                resolve(
-                    readArray.map(
-                        (_, idx) => {
-                            this.log.push('Row: ' + idx);
-                            return(this.readRow(instructor, schema))
-                        }
-                    )
-                )
-            })
-        );
-    }
     /**
      * Create a new parser
      * @param log a string array that will be populated by parse calls
@@ -777,20 +799,14 @@ export class SavParser {
         const position = feeder.position();
         return(
             this.schema(feeder).then(
-                schema => {
-                    if (schema.internal.integer.compression !== 1){
-                        throw new Error('Uncompressed data parse not implemented');
-                    }
-                    feeder.jump(schema.internal.finished);
-                    return(
-                        this.readData(feeder, schema).then(
-                            rows => ({
-                                ...schema,
-                                rows : rows
-                            })
-                        )
-                    );
-                }
+                schema => ({
+                    ...schema,
+                    rows : new DataReader(
+                        schema,
+                        feeder,
+                        this.log
+                    ).read()
+                })
             ).finally(() => feeder.jump(position))
         );
     }
