@@ -85,9 +85,10 @@ export interface Internal {
     },
     display : Array<Display>,
     documents : Array<Array<string>>,
+    names : Map<string, string>,
     labels : Map<string, string>,
-    longs : Map<string, number>,
     levels : Array<Scale>,
+    longs : Map<string, number>,
     extra : Array<ArrayBuffer>,
     unrecognized : Array<[number, Array<ArrayBuffer>]>,
     finished : number

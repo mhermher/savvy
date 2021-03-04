@@ -279,7 +279,7 @@ export class SavParser {
         const icount = view.getInt32(4, true);
         if (magic !== 4){
             throw new Error(
-                'Labels read error. ' +
+                'Levels read error. ' +
                 'Magic value Expected: 4 ' +
                 'Actual: ' + magic
             )
@@ -343,8 +343,8 @@ export class SavParser {
             )
         );
     }
-    private readLabels(feeder : Feeder, size : number) : Map<string, string> {
-        this.log.push('Labels at ' + feeder.position());
+    private readNames(feeder : Feeder, size : number) : Map<string, string> {
+        this.log.push('Names at ' + feeder.position());
         const raw = this.decoder.decode(feeder.next(size));
         return(
             new Map(
@@ -368,8 +368,8 @@ export class SavParser {
             )
         );
     }
-    private readLongLabels(feeder : Feeder, size : number) : ArrayBuffer {
-        this.log.push('Long Labels at ' + feeder.position());
+    private readLongNames(feeder : Feeder, size : number) : ArrayBuffer {
+        this.log.push('Long Names at ' + feeder.position());
         // need to figure out how this works
         return(feeder.next(size));
     }
@@ -451,9 +451,9 @@ export class SavParser {
                             break;
                         case 13:
                             this.log.push('Subcode 13');
-                            partial.labels = new Map([
-                                ...(partial.labels ?? []),
-                                ...this.readLabels(feeder, count * length)
+                            partial.names = new Map([
+                                ...(partial.names ?? []),
+                                ...this.readNames(feeder, count * length)
                             ]);
                             break;
                         case 14:
@@ -466,7 +466,7 @@ export class SavParser {
                         case 21:
                             this.log.push('Subcode 21');
                             partial.extra = (partial.extra ?? []).concat(
-                                this.readLongLabels(feeder, count * length)
+                                this.readLongNames(feeder, count * length)
                             );
                             break;
                         default:
@@ -506,6 +506,7 @@ export class SavParser {
             },
             display : partial.display ?? [],
             documents : partial.documents ?? [],
+            names : partial.names ?? new Map(),
             labels : partial.labels ?? new Map(),
             longs : partial.longs ?? new Map(),
             levels : partial.levels ?? [],

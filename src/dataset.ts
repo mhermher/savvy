@@ -8,7 +8,7 @@ export interface DataSet {
     /** The number of cases */
     n : number,
     /** The names of the columns */
-    names : Array<string>,
+    names : Map<string, string>,
     /** The map of unique column names to descriptive labels */
     labels : Map<string, string>,
     /** The map of scale levels and their labels, if available */
@@ -43,6 +43,9 @@ abstract class Column<T = string | number | boolean> {
     }
     public abstract values : Array<T>;
     public abstract measure : 'nominal' | 'ordinal' | 'scale';
+    public get name() : string {
+        return(this.parent.names.get(this.key) ?? this.key);
+    }
     public get label() : string {
         return(this.parent.labels.get(this.key) ?? '');
     }
@@ -73,18 +76,18 @@ class StrColumn extends Column<string> {
 }
 
 class FacColumn extends Column<string> {
-    private labels : Map<number, string>;
+    private levelmap : Map<number, string>;
     private missing : Set<number>;
     private type : number;
     constructor(
         parent : Savvy,
         key : string,
-        labels : Map<number, string>,
+        levelmap : Map<number, string>,
         missing : Set<number>,
         type : number
     ){
         super(parent, key);
-        this.labels = labels;
+        this.levelmap = levelmap;
         this.missing = missing;
         this.type = type;
     }
@@ -93,7 +96,7 @@ class FacColumn extends Column<string> {
         return(
             values.map(value => (this.missing.has(value)
                 ? null
-                : this.labels.get(value) ?? value.toString()
+                : this.levelmap.get(value) ?? value.toString()
             ))
         );
     }
@@ -160,13 +163,16 @@ class View implements DataSet {
     constructor(parent : Savvy, indices : Array<number>, keys : Array<string>){
         this.parent = parent;
         this.indices = indices?.slice() ?? new Array(parent.n).fill(0).map((_, idx) => idx);
-        this.keys = keys?.slice() ?? parent.names;
+        this.keys = keys?.slice() ?? Array.from(parent.names.keys());
     }
     public get n() : number {
         return(this.indices.length);
     }
-    public get names() : Array<string> {
-        return(Array.from(this.keys));
+    public get names() : Map<string, string> {
+        const names = this.parent.names;
+        return(
+            new Map(this.keys.map(key => [key, names.get(key) ?? key]))
+        )
     }
     public get labels() : Map<string, string> {
         const labels = this.parent.labels;
@@ -211,6 +217,7 @@ export class Savvy implements DataSet {
     private data : Array<Row>;
     private overflows : Map<string, Array<string>>;
     private fields : Map<string, Column>;
+    private _names : Map<string, string>;
     private _labels : Map<string, string>;
     private _levels : Map<string, Map<number, string>>;
     /**
@@ -219,6 +226,7 @@ export class Savvy implements DataSet {
      */
     constructor(parsed : Parsed) {
         this.cases = parsed.meta.cases;
+        this._names = parsed.internal.names;
         this._labels = parsed.internal.labels;
         this.data = parsed.rows;
         this._levels = new Map(
@@ -311,8 +319,17 @@ export class Savvy implements DataSet {
     public get n() : number {
         return(this.cases);
     }
-    public get names() : Array<string> {
-        return(Array.from(this.fields.keys()));
+    /**
+     * A map of of unique column keys to variable names
+     */
+    public get names() : Map<string, string> {
+        return(new Map([...this._names]))
+    }
+    public set names(names : Map<string, string>) {
+        this._names = new Map([
+            ...this._names,
+            ...names
+        ]);
     }
     /**
      * A map of of unique column keys to longer labels
