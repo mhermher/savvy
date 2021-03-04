@@ -257,7 +257,7 @@ export class SavParser {
         });
     }
     private getLevel(feeder : Feeder) : [number, string] {
-        this.log.push('Factor level at ' + feeder.position());
+        this.log.push('Scale level at ' + feeder.position());
         const view = new DataView(feeder.next(9));
         const length = view.getInt8(8);
         const size = ((length + 1) % 8
@@ -266,7 +266,7 @@ export class SavParser {
         );
         return([
             view.getFloat64(0, true),
-            this.decoder.decode(feeder.next(size)).substring(0, length)
+            this.decoder.decode(feeder.next(size)).substring(0, length).trim()
         ]);
     }
     private readScale(feeder : Feeder) : Scale {
