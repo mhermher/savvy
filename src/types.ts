@@ -39,7 +39,7 @@ export interface Header {
     /** A unique identifier for the column */
     name : string,
     /** A label for the column name */
-    description : string,
+    label : string,
     /** missingness indicators for the column */
     missing : {
         /** a set of values that represent a missing number */
@@ -51,11 +51,11 @@ export interface Header {
     }
 }
 
-/** Factor labels */
-export interface Factor {
+/** Scale levels and labels */
+export interface Scale {
     /** key-value pairs for underlying numeric value and string label */
     map : Map<number, string>,
-    /** a set of column indices which these factor labels apply to */
+    /** a set of column indices which these scale labels apply to */
     indices : Set<number>
 }
 
@@ -87,7 +87,7 @@ export interface Internal {
     documents : Array<Array<string>>,
     labels : Map<string, string>,
     longs : Map<string, number>,
-    factors : Array<Factor>,
+    levels : Array<Scale>,
     extra : Array<ArrayBuffer>,
     unrecognized : Array<[number, Array<ArrayBuffer>]>,
     finished : number

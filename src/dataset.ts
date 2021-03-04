@@ -11,6 +11,8 @@ export interface DataSet {
     names : Array<string>,
     /** The map of unique column names to descriptive labels */
     labels : Map<string, string>,
+    /** The map of scale levels and their labels, if available */
+    levels : Map<string, Map<number, string>>,
     /**
      * Get a single row of data as a {@link Map} dictionary of key-values
      * @param index the row index
@@ -42,10 +44,10 @@ abstract class Column<T = string | number | boolean> {
     public abstract values : Array<T>;
     public abstract measure : 'nominal' | 'ordinal' | 'scale';
     public get label() : string {
-        return(this.parent.labels.get(this.key) ?? this.key);
+        return(this.parent.labels.get(this.key) ?? '');
     }
-    public get description() : string {
-        return(this.parent.descriptions.get(this.key) ?? '');
+    public get levels() : Map<string, Map<number, string>> {
+        return(this.parent.levels.get(this.key) ?? new Map());
     }
 }
 
@@ -172,6 +174,12 @@ class View implements DataSet {
             new Map(this.keys.map(key => [key, labels.get(key) ?? '']))
         )
     }
+    public get levels() : Map<string, Map<number, string>> {
+        const levels = this.parent.levels;
+        return(
+            new Map(this.keys.map(key => [key, levels.get(key) ?? new Map()]))
+        )
+    }
     public row(index : number) : Row {
         return(this.parent.row(this.indices[index]));
     }
@@ -201,11 +209,10 @@ export class Savvy implements DataSet {
     }
     private cases : number;
     private data : Array<Row>;
-    private factors : Map<string, Map<number, string>>;
     private overflows : Map<string, Array<string>>;
     private fields : Map<string, Column>;
     private _labels : Map<string, string>;
-    private _descriptions : Map<string, string>;
+    private _levels : Map<string, Map<number, string>>;
     /**
      *
      * @param parsed a {@link Parsed} object generated with a {@link SavParser}
@@ -214,12 +221,12 @@ export class Savvy implements DataSet {
         this.cases = parsed.meta.cases;
         this._labels = parsed.internal.labels;
         this.data = parsed.rows;
-        this.factors = new Map(
+        this._levels = new Map(
             parsed.headers.map(header => [header.name, new Map()])
         );
-        parsed.internal.factors.forEach(
+        parsed.internal.levels.forEach(
             entry => entry.indices.forEach(
-                index => this.factors.set(
+                index => this._levels.set(
                     parsed.headers[index - 1].name,
                     entry.map
                 )
@@ -227,12 +234,12 @@ export class Savvy implements DataSet {
         );
         this.fields = new Map();
         this.overflows = new Map();
-        this._descriptions = new Map();
+        this._labels = new Map();
         let j : number = 0;
         for (let i = 0; i < parsed.headers.length; i++){
             j = i;
             const header = parsed.headers[i];
-            this._descriptions.set(header.name, header.description);
+            this._labels.set(header.name, header.label);
             if (header.code){
                 const overflow : Array<string> = [];
                 let length = parsed.internal.longs.get(header.name) ?? 0;
@@ -255,13 +262,13 @@ export class Savvy implements DataSet {
                     )
                 );
             } else {
-                if (this.factors.get(header.name)?.size) {
+                if (this._levels.get(header.name)?.size) {
                     this.fields.set(
                         header.name,
                         new FacColumn(
                             this,
                             header.name,
-                            this.factors.get(header.name),
+                            this._levels.get(header.name),
                             new Set(header.missing.codes),
                             parsed.internal.display[j].type
                         )
@@ -307,8 +314,11 @@ export class Savvy implements DataSet {
     public get names() : Array<string> {
         return(Array.from(this.fields.keys()));
     }
+    /**
+     * A map of of unique column keys to longer labels
+     */
     public get labels() : Map<string, string> {
-        return(new Map([...this._labels]))
+        return(new Map([...this._labels]));
     }
     public set labels(labels : Map<string, string>) {
         this._labels = new Map([
@@ -317,15 +327,15 @@ export class Savvy implements DataSet {
         ]);
     }
     /**
-     * A map of of unique column keys to longer descriptions
+     * A map of of unique column keys to scale levels and their labels
      */
-    public get descriptions() : Map<string, string> {
-        return(new Map([...this._descriptions]));
+    public get levels() : Map<string, Map<number, string>> {
+        return(new Map([...this._levels]));
     }
-    public set descriptions(descriptions : Map<string, string>) {
-        this._descriptions = new Map([
-            ...this._descriptions,
-            ...descriptions
+    public set levels(levels : Map<string, Map<number, string>>) {
+        this._levels = new Map([
+            ...this._levels,
+            ...levels
         ]);
     }
     public row(index : number) : Row {
