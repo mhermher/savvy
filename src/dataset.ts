@@ -220,6 +220,7 @@ export class Savvy implements DataSet {
     private _names : Map<string, string>;
     private _labels : Map<string, string>;
     private _levels : Map<string, Map<number, string>>;
+    private _missings : Map<string, Set<number | string>>;
     /**
      *
      * @param parsed a {@link Parsed} object generated with a {@link SavParser}
@@ -243,6 +244,7 @@ export class Savvy implements DataSet {
         this.fields = new Map();
         this.overflows = new Map();
         this._labels = new Map();
+        this._missings = new Map();
         let j : number = 0;
         for (let i = 0; i < parsed.headers.length; i++){
             j = i;
@@ -269,6 +271,7 @@ export class Savvy implements DataSet {
                         new Set(header.missing.strings)
                     )
                 );
+                this._missings.set(header.name, new Set(header.missing.strings));
             } else {
                 if (this._levels.get(header.name)?.size) {
                     this.fields.set(
@@ -293,6 +296,7 @@ export class Savvy implements DataSet {
                         )
                     )
                 }
+                this._missings.set(header.name, new Set(header.missing.codes));
             }
         }
         parsed.headers.reduce((left, right) => {
@@ -353,6 +357,18 @@ export class Savvy implements DataSet {
         this._levels = new Map([
             ...this._levels,
             ...levels
+        ]);
+    }
+    /**
+     * A map of of unique column keys to missing values
+     */
+    public get missings() : Map<string, Set<number | string>> {
+        return(new Map([...this._missings]));
+    }
+    public set missings(missings : Map<string, Set<number | string>>) {
+        this._missings = new Map([
+            ...this._missings,
+            ...missings
         ]);
     }
     public row(index : number) : Row {
