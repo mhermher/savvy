@@ -86,7 +86,6 @@ export interface Internal {
     display : Array<Display>,
     documents : Array<Array<string>>,
     names : Map<string, string>,
-    labels : Map<string, string>,
     levels : Array<Scale>,
     longs : Map<string, number>,
     extra : Array<ArrayBuffer>,

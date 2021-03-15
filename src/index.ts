@@ -94,7 +94,7 @@ class DataReader {
         return(
             new DataView(this.feeder.next(8)).getFloat64(
                 0,
-                this.schema.internal.integer.endianness == 2
+                this.schema.internal.integer.endianness === 2
             )
         )
     }
@@ -507,7 +507,6 @@ export class SavParser {
             display : partial.display ?? [],
             documents : partial.documents ?? [],
             names : partial.names ?? new Map(),
-            labels : partial.labels ?? new Map(),
             longs : partial.longs ?? new Map(),
             levels : partial.levels ?? [],
             extra : partial.extra ?? [],

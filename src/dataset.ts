@@ -228,7 +228,6 @@ export class Savvy implements DataSet {
     constructor(parsed : Parsed) {
         this.cases = parsed.meta.cases;
         this._names = parsed.internal.names;
-        this._labels = parsed.internal.labels;
         this.data = parsed.rows;
         this._levels = new Map(
             parsed.headers.map(header => [header.name, new Map()])
