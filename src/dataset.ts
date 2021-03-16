@@ -1,4 +1,4 @@
-import { Header, Parsed, Row } from "./types";
+import { Parsed, Row } from "./types";
 
 /**
  * An tabular object with rows and columns and cells values of either
@@ -7,12 +7,12 @@ import { Header, Parsed, Row } from "./types";
 export interface DataSet {
     /** The number of cases */
     n : number,
+    /** keys of columns */
+    keys : Array<string>,
     /** The names of the columns */
     names : Map<string, string>,
     /** The map of unique column names to descriptive labels */
     labels : Map<string, string>,
-    /** The map of scale levels and their labels, if available */
-    levels : Map<string, Map<number, string>>,
     /**
      * Get a single row of data as a {@link Map} dictionary of key-values
      * @param index the row index
@@ -21,10 +21,17 @@ export interface DataSet {
     row(index : number) : Row,
     /**
      * Get a single column of data as an Array
-     * @param key the name of the column
+     * @param key the key of the column
      * @returns an Array of either numbers, strings or booleans
      */
     col(key : string) : Array<number> | Array<string> | Array<boolean>
+    /**
+     *
+     * @param index row index
+     * @param keys column key
+     * @returns a string number or boolean at the cell address
+     */
+    cell(index : number, key : string) : string | number | boolean
     /**
      * Subset the object by row and/or column identifiers
      * @param indices an optional Array of row indices
@@ -43,16 +50,27 @@ abstract class Column<U extends number | string | boolean, T extends U | string 
         this.key = key;
         this.nulls = nulls;
     }
-    public abstract values : Array<T>;
-    public abstract measure : 'nominal' | 'ordinal' | 'scale';
+    public abstract cast(value : U) : T;
+    public abstract measure : 'nominal' | 'ordinal' | 'scale' | 'null';
+    public abstract levels : Map<U, T>;
+    public raw() : Array<U> {
+        return(
+            (new Array(this.parent.n)).fill(0).map(
+                (_, idx) => this.parent.cell(idx, this.key, false) as U
+            )
+        )
+    }
+    public get values() : Array<T> {
+        return(this.raw().map(value => this.cast(value)));
+    }
+    public exists() : boolean {
+        return(true);
+    }
     public get name() : string {
         return(this.parent.names.get(this.key) ?? this.key);
     }
     public get label() : string {
         return(this.parent.labels.get(this.key) ?? '');
-    }
-    public get levels() : Map<string, Map<number, string>> {
-        return(this.parent.levels.get(this.key) ?? new Map());
     }
     public get missing() : Set<U> {
         return(new Set(this.nulls));
@@ -65,40 +83,58 @@ abstract class Column<U extends number | string | boolean, T extends U | string 
     }
 }
 
+class NullColumn extends Column<boolean> {
+    constructor(parent : Savvy) {
+        super(parent, '<NULL>', new Set());
+    }
+    public exists() : boolean {
+        return(false);
+    }
+    public raw() : Array<boolean> {
+        return((new Array(this.parent.n)).fill(null));
+    }
+    public get values() : Array<boolean> {
+        return((new Array(this.parent.n)).fill(null));
+    }
+    public cast(value : boolean) : boolean {
+        return(null);
+    }
+    public get measure() : 'null' {
+        return('null');
+    }
+    public get levels() : Map<boolean, boolean> {
+        return(new Map());
+    }
+}
+
 class StrColumn extends Column<string> {
-    public get values() : Array<string> {
-        const values = this.parent.col(this.key) as Array<string>;
-        return(
-            values.map(value => this.nulls.has(value) ? null : value)
-        )
+    public cast(value : string) : string {
+        return(this.ismissing(value) ? null : value);
     }
     public get measure() : 'nominal' {
         return('nominal');
     }
+    public get levels() : Map<string, string> {
+        return(new Map());
+    }
 }
 
 class FacColumn extends Column<number, string> {
-    private levelmap : Map<number, string>;
+    private _levels : Map<number, string>;
     private type : number;
     constructor(
         parent : Savvy,
         key : string,
-        levelmap : Map<number, string>,
+        levels : Map<number, string>,
         nulls : Set<number>,
         type : number
     ){
         super(parent, key, nulls);
-        this.levelmap = levelmap;
+        this._levels = levels;
         this.type = type;
     }
-    public get values() : Array<string> {
-        const values = this.parent.col(this.key) as Array<number>;
-        return(
-            values.map(value => (this.nulls.has(value)
-                ? null
-                : this.levelmap.get(value) ?? value.toString()
-            ))
-        );
+    public cast(value : number) : string {
+        return(this.ismissing(value) ? null : this._levels.get(value))
     }
     public get measure() : 'nominal' | 'ordinal' | 'scale' {
         switch(this.type){
@@ -107,14 +143,15 @@ class FacColumn extends Column<number, string> {
             default: return('nominal');
         }
     }
-    public get raw() : Array<number> {
-        const values = this.parent.col(this.key) as Array<number>;
-        return(
-            values.map(value => (this.nulls.has(value)
-                ? null
-                : value
-            ))
-        );
+    public get levels() : Map<number, string> {
+        return(new Map([...this._levels]));
+    }
+    public set levels(levels : Map<number, string>) {
+        levels.forEach((value, key) => {
+            if (this._levels.has(key)) {
+                this._levels.set(key, value);
+            }
+        });
     }
 }
 
@@ -132,17 +169,17 @@ class NumColumn extends Column<number> {
         this.nullrange = nullrange;
         this.type = type;
     }
-    public get values() : Array<number> {
-        const values = this.parent.col(this.key) as Array<number>;
-        return(
-            values.map(value => this.ismissing(value) ? null : value)
-        )
+    public cast(value : number) : number {
+        return(this.ismissing(value) ? null : value);
     }
     public get measure() : 'ordinal' | 'scale' {
         switch(this.type){
             case 2: return('ordinal');
             default: return('scale');
         }
+    }
+    public get levels() : Map<number, number> {
+        return(new Map());
     }
     public ismissing(value : number) : boolean {
         return(
@@ -157,14 +194,17 @@ class NumColumn extends Column<number> {
 class View implements DataSet {
     private parent : Savvy;
     private indices : Array<number>;
-    private keys : Array<string>;
+    private _keys : Array<string>;
     constructor(parent : Savvy, indices : Array<number>, keys : Array<string>){
         this.parent = parent;
         this.indices = indices?.slice() ?? new Array(parent.n).fill(0).map((_, idx) => idx);
-        this.keys = keys?.slice() ?? Array.from(parent.names.keys());
+        this._keys = keys?.slice() ?? Array.from(parent.names.keys());
     }
     public get n() : number {
         return(this.indices.length);
+    }
+    public get keys() : Array<string> {
+        return([...this._keys]);
     }
     public get names() : Map<string, string> {
         const names = this.parent.names;
@@ -178,12 +218,6 @@ class View implements DataSet {
             new Map(this.keys.map(key => [key, labels.get(key) ?? '']))
         )
     }
-    public get levels() : Map<string, Map<number, string>> {
-        const levels = this.parent.levels;
-        return(
-            new Map(this.keys.map(key => [key, levels.get(key) ?? new Map()]))
-        )
-    }
     public row(index : number) : Row {
         return(this.parent.row(this.indices[index]));
     }
@@ -192,6 +226,9 @@ class View implements DataSet {
         return(
             this.indices.map(index => all[index])
         ) as Array<string> | Array<number> | Array<boolean>;
+    }
+    public cell(index : number, key : string) : string | number | boolean {
+        return(this.parent.cell(this.indices[index], key));
     }
     public view(indices : Array<number>, keys : Array<string>) : DataSet {
         return(
@@ -214,7 +251,6 @@ export class Savvy implements DataSet {
     private fields : Map<string, Column<string | number | boolean>>;
     private _names : Map<string, string>;
     private _labels : Map<string, string>;
-    private _levels : Map<string, Map<number, string>>;
     /**
      *
      * @param parsed a {@link Parsed} object generated with a {@link SavParser}
@@ -223,12 +259,12 @@ export class Savvy implements DataSet {
         this.cases = parsed.meta.cases;
         this._names = parsed.internal.names;
         this.data = parsed.rows;
-        this._levels = new Map(
+        const levels = new Map(
             parsed.headers.map(header => [header.name, new Map()])
         );
         parsed.internal.levels.forEach(
             entry => entry.indices.forEach(
-                index => (index <= parsed.headers.length) && this._levels.set(
+                index => (index <= parsed.headers.length) && levels.set(
                     parsed.headers[index - 1].name,
                     entry.map
                 )
@@ -261,13 +297,13 @@ export class Savvy implements DataSet {
                     )
                 );
             } else {
-                if (this._levels.get(header.name)?.size) {
+                if (levels.get(header.name)?.size) {
                     this.fields.set(
                         header.name,
                         new FacColumn(
                             this,
                             header.name,
-                            this._levels.get(header.name),
+                            levels.get(header.name),
                             new Set(header.missing.codes),
                             parsed.internal.display[j].type
                         )
@@ -319,28 +355,29 @@ export class Savvy implements DataSet {
             }
         });
     }
-    /**
-     * A map of of unique column keys to scale levels and their labels
-     */
-    public get levels() : Map<string, Map<number, string>> {
-        return(new Map([...this._levels]));
+    public row(index : number, cast : boolean = true) : Row {
+        const row = new Map();
+        this.keys.forEach(key => row.set(key, this.cell(index, key, cast)));
+        return(row);
     }
-    public set levels(levels : Map<string, Map<number, string>>) {
-        levels.forEach((value, key) => {
-            if (this._levels.has(key)) {
-                this._levels.set(key, value);
-            }
-        });
+    public field(key : string) : Column<string | number | boolean> {
+        return(this.fields.get(key) ?? new NullColumn(this))
     }
-    public row(index : number) : Row {
-        return(new Map([...this.data[index]]));
-    }
-    public col(key : string) : Array<number> | Array<string> | Array<boolean> {
+    public col(key : string, cast : boolean = true) : Array<number> | Array<string> | Array<boolean> {
         return(
-            this.data.map(
-                row => row.get(key) ?? null
+            (new Array(this.n).fill(0).map(
+                (_, idx) => this.cell(idx, key, cast))
             ) as Array<number> | Array<string> | Array<boolean>
         )
+    }
+    public cell(index : number, key : string, cast : boolean = true) : number | string | boolean {
+        const field = this.field(key);
+        const row = this.data[index];
+        let raw = row.get(key);
+        this.overflows.get(key)?.forEach(overflow => {
+            raw = raw.toString() + (row.get(overflow) ?? '')
+        })
+        return(cast ? field.cast(raw) : raw)
     }
     public view(indices? : Array<number>, fields? : Array<string>) : DataSet {
         return(
