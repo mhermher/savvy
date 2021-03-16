@@ -251,15 +251,12 @@ export class Savvy implements DataSet {
             this._labels.set(header.name, header.label);
             if (header.code){
                 const overflow : Array<string> = [];
-                let length = parsed.internal.longs.get(header.name) ?? 0;
-                while (length){
-                    // decrement left-aligned but
-                    // overflowing vars right-aligned
-                    // [255, 255, 255, 12]
-                    // has an overflow of 3 * 256 (8-padded)
-                    // but keep left-most header instead of right-most
-                    length -= Savvy.pad(parsed.headers[i++].code);
-                    overflow.push(parsed.headers[i].name);
+                if (parsed.internal.longs.has(header.name)) {
+                    let segs = Math.floor(parsed.internal.longs.get(header.name) / 252);
+                    while (segs > 0) {
+                        segs -= 1;
+                        overflow.push(parsed.headers[++i].name);
+                    }
                 }
                 this.overflows.set(header.name, overflow);
                 this.fields.set(
@@ -295,29 +292,8 @@ export class Savvy implements DataSet {
                         )
                     )
                 }
-                this._missings.set(header.name, new Set(header.missing.codes));
             }
         }
-        parsed.headers.reduce((left, right) => {
-            if (left.length){
-                const last = left.pop();
-                if (parsed.internal.longs.has(last.name)){
-                    const overflow = parsed.internal.longs.get(last.name);
-                    if (overflow){
-                        parsed.internal.longs.set(
-                            last.name,
-                            overflow - (8 * Math.ceil(last.code / 8))
-                        )
-                    } else {
-                        parsed.internal.longs.delete(last.name);
-                    }
-                }
-                left.push(last, right);
-                return(left);
-            } else {
-                return([right]);
-            }
-        }, [] as Array<Header>);
     }
     public get n() : number {
         return(this.cases);
