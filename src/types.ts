@@ -48,7 +48,8 @@ export interface Header {
         strings : Array<string>,
         /** a range of numbers [min, max] to indicate a missing region */
         range : [number, number]
-    }
+    },
+    trailers : number
 }
 
 /** Scale levels and labels */

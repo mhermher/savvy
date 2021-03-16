@@ -253,7 +253,8 @@ export class SavParser {
             code : code,
             name : name,
             label : label,
-            missing : missing
+            missing : missing,
+            trailers : 0
         });
     }
     private getLevel(feeder : Feeder) : [number, string] {
@@ -528,6 +529,8 @@ export class SavParser {
             field = this.readField(feeder);
             if (field.code > -1){
                 fields.push(field);
+            } else {
+                fields[fields.length - 1].trailers++;
             }
         }
         return(fields);

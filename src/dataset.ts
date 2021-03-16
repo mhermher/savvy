@@ -262,10 +262,17 @@ export class Savvy implements DataSet {
         const levels = new Map(
             parsed.headers.map(header => [header.name, new Map()])
         );
+        let cursor = 0;
+        const indexmap = new Map(parsed.headers.map((header, idx) => {
+            const offset = cursor + 1;
+            cursor++;
+            cursor += header.trailers;
+            return([offset, idx]);
+        }));
         parsed.internal.levels.forEach(
             entry => entry.indices.forEach(
-                index => (index <= parsed.headers.length) && levels.set(
-                    parsed.headers[index - 1].name,
+                index => indexmap.has(index) && levels.set(
+                    parsed.headers[indexmap.get(index)].name,
                     entry.map
                 )
             )
