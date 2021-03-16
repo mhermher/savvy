@@ -1,6 +1,6 @@
 {
   "name": "jsavvy",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Read .sav files (SPSS, PSPP) in a browser or in node.js",
   "main": "./dist/index.js",
   "types": "./dist/index.js",
