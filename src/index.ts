@@ -1,4 +1,4 @@
-import { Display, Factor, Header, Internal, Meta, Parsed, Row, Schema } from './types';
+import { Display, Scale, Header, Internal, Meta, Parsed, Row, Schema } from './types';
 
 /**
  * An object that stores an {@link ArrayBuffer} and returns subsequent portions on demand
@@ -94,7 +94,7 @@ class DataReader {
         return(
             new DataView(this.feeder.next(8)).getFloat64(
                 0,
-                this.schema.internal.integer.endianness == 2
+                this.schema.internal.integer.endianness === 2
             )
         )
     }
@@ -179,7 +179,7 @@ class DataReader {
 export class SavParser {
     private decoder : TextDecoder;
     private log : Array<string>;
-    private readFieldDesc(feeder : Feeder) : string {
+    private readFieldLabel(feeder : Feeder) : string {
         let length = new DataView(feeder.next(4)).getInt32(0, true);
         if (length % 4){
             length = length + (4 - (length % 4));
@@ -235,9 +235,9 @@ export class SavParser {
         const code = view.getInt32(0, true);
         const labeled = view.getInt32(4, true);
         const missings = view.getInt32(8, true);
-        const name = this.decoder.decode(chunk.slice(20, 28));
-        const description = (labeled
-            ? this.readFieldDesc(feeder)
+        const name = this.decoder.decode(chunk.slice(20, 28)).trim();
+        const label = (labeled
+            ? this.readFieldLabel(feeder)
             : ''
         );
         const missing = (missings
@@ -252,12 +252,12 @@ export class SavParser {
             start : start,
             code : code,
             name : name,
-            description : description,
+            label : label,
             missing : missing
         });
     }
     private getLevel(feeder : Feeder) : [number, string] {
-        this.log.push('Factor level at ' + feeder.position());
+        this.log.push('Scale level at ' + feeder.position());
         const view = new DataView(feeder.next(9));
         const length = view.getInt8(8);
         const size = ((length + 1) % 8
@@ -266,11 +266,11 @@ export class SavParser {
         );
         return([
             view.getFloat64(0, true),
-            this.decoder.decode(feeder.next(size)).substring(0, length)
+            this.decoder.decode(feeder.next(size)).substring(0, length).trim()
         ]);
     }
-    private readFactor(feeder : Feeder) : Factor {
-        this.log.push('Factor definition at ' + feeder.position());
+    private readScale(feeder : Feeder) : Scale {
+        this.log.push('Scale definition at ' + feeder.position());
         const count = (new DataView(feeder.next(4))).getInt32(0, true);
         const readArray = new Array(count).fill(0);
         const levels = new Map(readArray.map(() => this.getLevel(feeder)));
@@ -279,7 +279,7 @@ export class SavParser {
         const icount = view.getInt32(4, true);
         if (magic !== 4){
             throw new Error(
-                'Labels read error. ' +
+                'Levels read error. ' +
                 'Magic value Expected: 4 ' +
                 'Actual: ' + magic
             )
@@ -343,8 +343,8 @@ export class SavParser {
             )
         );
     }
-    private readLabels(feeder : Feeder, size : number) : Map<string, string> {
-        this.log.push('Labels at ' + feeder.position());
+    private readNames(feeder : Feeder, size : number) : Map<string, string> {
+        this.log.push('Names at ' + feeder.position());
         const raw = this.decoder.decode(feeder.next(size));
         return(
             new Map(
@@ -368,8 +368,8 @@ export class SavParser {
             )
         );
     }
-    private readLongLabels(feeder : Feeder, size : number) : ArrayBuffer {
-        this.log.push('Long Labels at ' + feeder.position());
+    private readLongNames(feeder : Feeder, size : number) : ArrayBuffer {
+        this.log.push('Long Names at ' + feeder.position());
         // need to figure out how this works
         return(feeder.next(size));
     }
@@ -392,8 +392,8 @@ export class SavParser {
             code = (new DataView(feeder.next(4))).getInt32(0, true);
             switch(code){
                 case 3:
-                    partial.factors = (partial.factors ?? []).concat(
-                        this.readFactor(feeder)
+                    partial.levels = (partial.levels ?? []).concat(
+                        this.readScale(feeder)
                     );
                     break;
                 case 6:
@@ -451,9 +451,9 @@ export class SavParser {
                             break;
                         case 13:
                             this.log.push('Subcode 13');
-                            partial.labels = new Map([
-                                ...(partial.labels ?? []),
-                                ...this.readLabels(feeder, count * length)
+                            partial.names = new Map([
+                                ...(partial.names ?? []),
+                                ...this.readNames(feeder, count * length)
                             ]);
                             break;
                         case 14:
@@ -466,7 +466,7 @@ export class SavParser {
                         case 21:
                             this.log.push('Subcode 21');
                             partial.extra = (partial.extra ?? []).concat(
-                                this.readLongLabels(feeder, count * length)
+                                this.readLongNames(feeder, count * length)
                             );
                             break;
                         default:
@@ -506,9 +506,9 @@ export class SavParser {
             },
             display : partial.display ?? [],
             documents : partial.documents ?? [],
-            labels : partial.labels ?? new Map(),
+            names : partial.names ?? new Map(),
             longs : partial.longs ?? new Map(),
-            factors : partial.factors ?? [],
+            levels : partial.levels ?? [],
             extra : partial.extra ?? [],
             unrecognized : partial.unrecognized ?? [],
             finished : partial.finished
@@ -812,5 +812,5 @@ export class SavParser {
     }
 }
 
-export {Display, Factor, Header, Internal, Meta, Parsed, Row, Schema};
+export {Display, Scale, Header, Internal, Meta, Parsed, Row, Schema};
 export {Savvy} from './dataset';
