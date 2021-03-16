@@ -298,6 +298,9 @@ export class Savvy implements DataSet {
     public get n() : number {
         return(this.cases);
     }
+    public get keys() : Array<string> {
+        return(Array.from(this.fields.keys()));
+    }
     /**
      * A map of of unique column keys to variable names
      */
