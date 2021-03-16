@@ -234,7 +234,7 @@ export class Savvy implements DataSet {
         );
         parsed.internal.levels.forEach(
             entry => entry.indices.forEach(
-                index => this._levels.set(
+                index => (index <= parsed.headers.length) && this._levels.set(
                     parsed.headers[index - 1].name,
                     entry.map
                 )
