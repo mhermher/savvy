@@ -28,9 +28,9 @@ parser.all(
     parsed => all = parsed
 );
 // nodejs Buffers may need to be sliced when accessing the underlying ArrayBuffer
-// It's always safer to slice from the byteOffset (which commonly is 0)
+// It's always safer to slice from the byteOffset (which commonly is 0) and byteLength
 new Feeder(
-    buffer.buffer.slice(buffer.byteOffset)
+    buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
 );
 ```
 
